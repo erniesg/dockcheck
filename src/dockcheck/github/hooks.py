@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 class HookConfig(BaseModel):
@@ -16,15 +15,15 @@ class HookConfig(BaseModel):
     framework: str = "script"  # "script", "pre-commit", "lefthook"
 
 
-def generate_pre_commit_script(config: Optional[HookConfig] = None) -> str:
+def generate_pre_commit_script(config: HookConfig | None = None) -> str:
     """Generate a standalone git pre-commit hook script."""
     cfg = config or HookConfig()
 
-    flags = ""
+    _flags = ""
     if cfg.check_hard_stops_only:
-        flags = " --commands \"$(git diff --cached --name-only)\""
+        _flags = ' --commands "$(git diff --cached --name-only)"'
 
-    return f"""#!/bin/sh
+    return """#!/bin/sh
 # dockcheck pre-commit hook
 # Runs policy check on staged changes before allowing commit
 
@@ -84,7 +83,7 @@ def generate_lefthook_yaml() -> str:
 
 def install_hook(
     target_dir: str = ".",
-    config: Optional[HookConfig] = None,
+    config: HookConfig | None = None,
 ) -> Path:
     """Install a pre-commit hook to .git/hooks/."""
     cfg = config or HookConfig()

@@ -4,22 +4,19 @@ from __future__ import annotations
 
 import json
 import subprocess
-from unittest.mock import MagicMock, call, patch
-
-import pytest
+from unittest.mock import MagicMock, patch
 
 from dockcheck.core.policy import Policy, PolicyEngine
 from dockcheck.tools.terraform import (
+    _DESTROY_BLOCK_REASON,
     PlanResult,
     ResourceChange,
     TerraformResult,
     TerraformTool,
-    _DESTROY_BLOCK_REASON,
     _count_actions,
     _extract_resource_changes,
     _parse_plan_json,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -254,7 +251,9 @@ class TestTerraformPlan:
 
     @patch("dockcheck.tools.terraform.subprocess.run")
     def test_plan_without_json(self, mock_run):
-        mock_run.return_value = _completed_process(stdout="Plan: 1 to add, 0 to change, 0 to destroy.")
+        mock_run.return_value = _completed_process(
+            stdout="Plan: 1 to add, 0 to change, 0 to destroy."
+        )
         tool = TerraformTool(workdir="/tmp/infra")
         result = tool.plan(output_json=False)
 

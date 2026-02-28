@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import docker
 import docker.errors
@@ -17,8 +17,8 @@ logger = logging.getLogger(__name__)
 class BuildResult(BaseModel):
     success: bool
     image_tag: str
-    logs: List[str] = Field(default_factory=list)
-    error: Optional[str] = None
+    logs: list[str] = Field(default_factory=list)
+    error: str | None = None
 
 
 class RunResult(BaseModel):
@@ -26,7 +26,7 @@ class RunResult(BaseModel):
     exit_code: int
     stdout: str = ""
     stderr: str = ""
-    error: Optional[str] = None
+    error: str | None = None
 
 
 class PushResult(BaseModel):
@@ -34,8 +34,8 @@ class PushResult(BaseModel):
     image: str
     registry: str
     blocked: bool = False
-    block_reason: Optional[str] = None
-    error: Optional[str] = None
+    block_reason: str | None = None
+    error: str | None = None
 
 
 class DockerTool:
@@ -51,7 +51,7 @@ class DockerTool:
     - Memory limited to 512 MiB
     """
 
-    def __init__(self, client: Optional[Any] = None) -> None:
+    def __init__(self, client: Any | None = None) -> None:
         if client is not None:
             self.client = client
             return
@@ -74,7 +74,7 @@ class DockerTool:
     ) -> BuildResult:
         """Build a Docker image. Always permitted — no policy check required."""
         logger.info("docker build: path=%s tag=%s dockerfile=%s", path, tag, dockerfile)
-        logs: List[str] = []
+        logs: list[str] = []
         try:
             _image, build_logs = self.client.images.build(
                 path=path,
@@ -110,7 +110,7 @@ class DockerTool:
         self,
         image: str,
         command: str = "",
-        env: Optional[Dict[str, str]] = None,
+        env: dict[str, str] | None = None,
         timeout: int = 300,
         network_disabled: bool = True,
         read_only: bool = True,
@@ -131,7 +131,7 @@ class DockerTool:
             mem_limit,
         )
         try:
-            run_kwargs: Dict[str, Any] = {
+            run_kwargs: dict[str, Any] = {
                 "image": image,
                 "remove": True,
                 "stdout": True,
@@ -179,7 +179,7 @@ class DockerTool:
         self,
         image: str,
         registry: str,
-        policy_engine: Optional[PolicyEngine] = None,
+        policy_engine: PolicyEngine | None = None,
     ) -> PushResult:
         """
         Push an image to a registry.

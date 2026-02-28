@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -26,8 +26,8 @@ class ParallelResult(BaseModel):
     """Result from a parallel dispatch batch."""
 
     task_id: str
-    result: Optional[AgentStepResult] = None
-    error: Optional[str] = None
+    result: AgentStepResult | None = None
+    error: str | None = None
     elapsed_seconds: float = 0.0
 
 
@@ -97,7 +97,7 @@ class MetricsCollector:
     def turn_tracker(self) -> TurnTracker:
         return self._turn_tracker
 
-    def record_run(self, metrics: "RunMetrics") -> None:
+    def record_run(self, metrics: RunMetrics) -> None:
         self._runs.append(metrics)
 
     def get_summary(self) -> dict[str, Any]:

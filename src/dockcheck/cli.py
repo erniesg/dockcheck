@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
 import click
 
-from dockcheck.core.confidence import ConfidenceScorer
 from dockcheck.core.policy import EvaluationResult, Policy, PolicyEngine, Verdict
-from dockcheck.tools.hardstop import CriticalPathChecker, DiffAnalyzer, HardStopChecker
+from dockcheck.tools.hardstop import DiffAnalyzer
 
 
 def _find_policy(path: str | None = None) -> Path:
@@ -47,8 +45,14 @@ def cli() -> None:
 @click.option(
     "--template",
     type=click.Choice(["hackathon", "trading-bot", "fastapi-app", "react-app"]),
-    default="hackathon",
-    help="Template to scaffold from.",
+    default=None,
+    help="Template to scaffold from (skips detection).",
+)
+@click.option(
+    "--provider",
+    type=click.Choice(["cloudflare", "vercel", "fly", "netlify", "docker-registry"]),
+    default=None,
+    help="Deploy provider (skips detection).",
 )
 @click.option(
     "--dir",
@@ -57,23 +61,49 @@ def cli() -> None:
     default=".",
     help="Target directory for scaffolding.",
 )
-def init(template: str, target_dir: str) -> None:
-    """Scaffold a .dockcheck/ directory with policy, skills, and config."""
+@click.option(
+    "--non-interactive",
+    is_flag=True,
+    help="Skip interactive prompts (use defaults/env vars).",
+)
+def init(
+    template: str | None,
+    provider: str | None,
+    target_dir: str,
+    non_interactive: bool,
+) -> None:
+    """Scaffold a .dockcheck/ directory with policy, skills, and config.
+
+    Without --template, scans the repo to detect language, framework,
+    and deploy target, then bootstraps auth and generates workflows.
+    """
     target = Path(target_dir)
     dockcheck_dir = target / ".dockcheck"
 
     if dockcheck_dir.exists():
-        click.echo(f".dockcheck/ already exists at {dockcheck_dir}. Use --dir to specify another location.")
+        click.echo(
+            f".dockcheck/ already exists at {dockcheck_dir}. "
+            "Use --dir to specify another location."
+        )
         return
 
+    # Legacy template-only path
+    if template is not None:
+        _init_from_template(template, target, dockcheck_dir)
+        return
+
+    # Smart detection path
+    _init_smart(target, dockcheck_dir, provider, non_interactive)
+
+
+def _init_from_template(template: str, target: Path, dockcheck_dir: Path) -> None:
+    """Legacy init: scaffold from a named template."""
     dockcheck_dir.mkdir(parents=True)
     (dockcheck_dir / "skills").mkdir()
 
-    # Write default policy
     default_policy = _default_policy(template)
     (dockcheck_dir / "policy.yaml").write_text(default_policy)
 
-    # Write default project config
     default_config = _default_config()
     (target / "dockcheck.yml").write_text(default_config)
 
@@ -86,11 +116,142 @@ def init(template: str, target_dir: str) -> None:
     click.echo("  3. Run `dockcheck run` to execute the pipeline")
 
 
+def _init_smart(
+    target: Path,
+    dockcheck_dir: Path,
+    provider_name: str | None,
+    non_interactive: bool,
+) -> None:
+    """Smart init: detect repo, bootstrap auth, generate workflows."""
+    from dockcheck.github.action import WorkflowConfig, write_workflow
+    from dockcheck.init.auth import AuthBootstrapper
+    from dockcheck.init.detect import RepoDetector
+    from dockcheck.init.providers import ProviderRegistry
+
+    detector = RepoDetector()
+    registry = ProviderRegistry()
+    auth = AuthBootstrapper(env_file=str(target / ".env"))
+
+    # 1. Scan repository
+    click.echo("Scanning repository...")
+    ctx = detector.detect(str(target))
+
+    lang_display = ctx.language or "unknown"
+    parts = [f"Language: {lang_display}"]
+    if ctx.framework:
+        parts.append(f"Framework: {ctx.framework}")
+    if ctx.has_wrangler_config:
+        parts.append("Config: wrangler.toml")
+    elif ctx.has_vercel_config:
+        parts.append("Config: vercel.json")
+    elif ctx.has_fly_config:
+        parts.append("Config: fly.toml")
+    elif ctx.has_netlify_config:
+        parts.append("Config: netlify.toml")
+    if ctx.git_remote:
+        parts.append(f"Remote: {ctx.git_remote}")
+    click.echo(f"  {' | '.join(parts)}")
+
+    # 2. Determine deploy provider
+    if provider_name:
+        selected = registry.get(provider_name)
+    else:
+        detected = registry.detect(ctx)
+        if not detected:
+            click.echo("\nNo deploy target detected. Using default policy.")
+            _init_from_template("hackathon", target, dockcheck_dir)
+            return
+
+        selected = detected[0]
+        if not non_interactive:
+            confirm = click.confirm(
+                f"\nDeploy target: {selected.display_name} "
+                f"(detected from config). Confirm?",
+                default=True,
+            )
+            if not confirm:
+                click.echo("Aborted.")
+                return
+
+    click.echo(f"\nDeploy target: {selected.display_name}")
+
+    # 3. Check and bootstrap auth
+    click.echo("\nChecking auth...")
+    status = auth.check(selected)
+
+    secrets_to_store = {}
+    if not status.all_ready:
+        missing = [s for s in status.secrets if not s.available_local]
+        if non_interactive:
+            click.echo("  Missing secrets (set in env or .env):")
+            for s in missing:
+                click.echo(f"    {s.name} — {s.setup_url}")
+        else:
+            for s in missing:
+                click.echo(f"  Missing: {s.name}")
+            collected = auth.prompt_missing(status)
+            secrets_to_store = collected
+    else:
+        click.echo("  All secrets available.")
+
+    # 4. Store secrets
+    if secrets_to_store:
+        auth.store_local(secrets_to_store, env_file=str(target / ".env"))
+        click.echo("\nStored to .env")
+
+        gitignore_updated = auth.ensure_gitignore(str(target))
+        if gitignore_updated:
+            click.echo(".gitignore updated")
+
+        if not non_interactive:
+            set_gh = click.confirm(
+                "Set as GitHub Secrets?", default=True
+            )
+            if set_gh:
+                ok = auth.store_github(secrets_to_store)
+                click.echo("  Done" if ok else "  Partial (check warnings)")
+    else:
+        auth.ensure_gitignore(str(target))
+
+    # 5. Generate policy + workflow
+    dockcheck_dir.mkdir(parents=True)
+    (dockcheck_dir / "skills").mkdir()
+
+    default_policy = _default_policy("hackathon")
+    (dockcheck_dir / "policy.yaml").write_text(default_policy)
+
+    # Generate provider-aware workflow
+    env_secrets = [s.name for s in selected.required_secrets]
+    wf_config = WorkflowConfig(
+        trigger_on_push=True,
+        env_secrets=env_secrets,
+        deploy_provider=selected.name,
+        deploy_secrets=selected.github_action_secrets,
+    )
+    wf_path = write_workflow(str(target), wf_config)
+
+    click.echo(f"\nGenerated: {dockcheck_dir / 'policy.yaml'}")
+    click.echo(f"Generated: {wf_path}")
+    click.echo("\nReady! Push to deploy.")
+
+
 @cli.command()
-@click.option("--policy", "policy_path", type=click.Path(), default=None, help="Path to policy.yaml")
-@click.option("--diff", "diff_source", type=click.Path(), default=None, help="Path to diff file (or - for stdin)")
-@click.option("--commands", multiple=True, help="Commands to check against hard stops")
-@click.option("--files", multiple=True, help="File paths to check against critical paths")
+@click.option(
+    "--policy", "policy_path", type=click.Path(),
+    default=None, help="Path to policy.yaml",
+)
+@click.option(
+    "--diff", "diff_source", type=click.Path(),
+    default=None, help="Diff file (or - for stdin)",
+)
+@click.option(
+    "--commands", multiple=True,
+    help="Commands to check against hard stops",
+)
+@click.option(
+    "--files", multiple=True,
+    help="File paths to check against critical paths",
+)
 @click.option("--json-output", "json_out", is_flag=True, help="Output as JSON")
 def check(
     policy_path: str | None,
@@ -153,8 +314,9 @@ def run(ctx: click.Context, policy_path: str | None, dry_run: bool) -> None:
         click.echo("  5. VERIFY  — Post-deploy smoke tests")
         click.echo("  6. PROMOTE — Promote to production (if policy allows)")
         click.echo(f"\nPolicy: {policy_file}")
-        click.echo(f"Auto-deploy staging threshold: {engine.policy.confidence_thresholds.auto_deploy_staging}")
-        click.echo(f"Auto-promote prod threshold: {engine.policy.confidence_thresholds.auto_promote_prod}")
+        thresholds = engine.policy.confidence_thresholds
+        click.echo(f"Auto-deploy staging threshold: {thresholds.auto_deploy_staging}")
+        click.echo(f"Auto-promote prod threshold: {thresholds.auto_promote_prod}")
         return
 
     click.echo("Pipeline execution requires agent dispatch (Phase 3).")

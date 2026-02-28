@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import shutil
 from abc import ABC, abstractmethod
-from typing import Optional
 
 from dockcheck.agents.dispatch import AgentDispatcher
 from dockcheck.agents.schemas import AgentResult
@@ -57,7 +56,7 @@ class ClaudeAdapter(AgentAdapter):
     all subprocess concerns to it.
     """
 
-    def __init__(self, dispatcher: Optional[AgentDispatcher] = None) -> None:
+    def __init__(self, dispatcher: AgentDispatcher | None = None) -> None:
         self._dispatcher = dispatcher or AgentDispatcher()
 
     def is_available(self) -> bool:
@@ -103,7 +102,7 @@ class CodexAdapter(AgentAdapter):
     def __init__(
         self,
         approval_mode: str = "full-auto",
-        dispatcher: Optional[AgentDispatcher] = None,
+        dispatcher: AgentDispatcher | None = None,
     ) -> None:
         self._approval_mode = approval_mode
         self._dispatcher = dispatcher or AgentDispatcher()

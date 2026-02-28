@@ -5,6 +5,7 @@ from __future__ import annotations
 import fnmatch
 from enum import Enum
 from pathlib import Path
+
 import yaml
 from pydantic import BaseModel, Field
 
@@ -61,13 +62,13 @@ class Policy(BaseModel):
     notifications: Notifications = Field(default_factory=Notifications)
 
     @classmethod
-    def from_yaml(cls, path: str | Path) -> "Policy":
+    def from_yaml(cls, path: str | Path) -> Policy:
         with open(path) as f:
             data = yaml.safe_load(f)
         return cls.model_validate(data)
 
     @classmethod
-    def from_dict(cls, data: dict) -> "Policy":
+    def from_dict(cls, data: dict) -> Policy:
         return cls.model_validate(data)
 
 
@@ -110,7 +111,8 @@ class PolicyEngine:
                     if pattern.pattern in cmd:
                         blocked_commands.append(cmd)
                         reasons.append(
-                            f"Hard stop: command '{cmd}' matches blocked pattern '{pattern.pattern}'"
+                            f"Hard stop: command '{cmd}' matches "
+                            f"blocked pattern '{pattern.pattern}'"
                         )
 
         # Check file paths against critical paths
@@ -139,7 +141,8 @@ class PolicyEngine:
 
         if deploys_this_hour > breakers.max_deploys_per_hour:
             breaker_violations.append(
-                f"Deploys this hour ({deploys_this_hour}) exceeds max {breakers.max_deploys_per_hour}"
+                f"Deploys this hour ({deploys_this_hour}) "
+                f"exceeds max {breakers.max_deploys_per_hour}"
             )
             reasons.append(breaker_violations[-1])
 

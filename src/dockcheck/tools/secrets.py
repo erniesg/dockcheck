@@ -5,9 +5,6 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import Dict, List, Optional
-
-from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
@@ -50,13 +47,13 @@ class SecretLoadError(Exception):
     """Raised when the .env file cannot be parsed."""
 
 
-def _parse_env_file(path: Path) -> Dict[str, str]:
+def _parse_env_file(path: Path) -> dict[str, str]:
     """
     Minimal .env parser — handles ``KEY=VALUE`` lines, ignores comments.
 
     Does not execute shell expansions or support multiline values.
     """
-    result: Dict[str, str] = {}
+    result: dict[str, str] = {}
     for lineno, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
         line = raw.strip()
         if not line or line.startswith("#"):
@@ -91,8 +88,8 @@ class SecretProvider:
         env = provider.inject({}, ["DATABASE_URL", "API_KEY"])
     """
 
-    def __init__(self, env_file: Optional[str] = None) -> None:
-        self._store: Dict[str, MaskedSecret] = {}
+    def __init__(self, env_file: str | None = None) -> None:
+        self._store: dict[str, MaskedSecret] = {}
 
         # Load process environment first
         for key, value in os.environ.items():
@@ -119,7 +116,7 @@ class SecretProvider:
     # Public API
     # ------------------------------------------------------------------
 
-    def get(self, name: str) -> Optional[MaskedSecret]:
+    def get(self, name: str) -> MaskedSecret | None:
         """
         Return the ``MaskedSecret`` for *name*, or ``None`` if not set.
 
@@ -130,7 +127,7 @@ class SecretProvider:
             logger.debug("Secret requested but not found: %s", name)
         return secret
 
-    def inject(self, target: Dict[str, str], secret_names: List[str]) -> Dict[str, str]:
+    def inject(self, target: dict[str, str], secret_names: list[str]) -> dict[str, str]:
         """
         Copy named secrets into *target* dict, revealing values for container injection.
 
@@ -145,6 +142,6 @@ class SecretProvider:
             target[name] = secret.reveal()
         return target
 
-    def available_keys(self) -> List[str]:
+    def available_keys(self) -> list[str]:
         """Return the names of all loaded secrets. Values are never returned."""
         return sorted(self._store.keys())

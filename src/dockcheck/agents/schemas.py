@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Literal, Optional
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -18,8 +18,8 @@ class FindingSeverity(str, Enum):
 class Finding(BaseModel):
     severity: FindingSeverity
     message: str
-    file_path: Optional[str] = None
-    line: Optional[int] = None
+    file_path: str | None = None
+    line: int | None = None
 
 
 class AgentResult(BaseModel):
@@ -30,7 +30,7 @@ class AgentResult(BaseModel):
     turns_used: int = 0
     summary: str = ""
     findings: list[Finding] = Field(default_factory=list)
-    action_needed: Optional[Literal["none", "retry", "escalate"]] = "none"
+    action_needed: Literal["none", "retry", "escalate"] | None = "none"
 
 
 class StepConfig(BaseModel):
@@ -42,7 +42,7 @@ class StepConfig(BaseModel):
     max_turns: int = 10
     timeout: int = 300
     depends_on: list[str] = Field(default_factory=list)
-    parallel_group: Optional[str] = None  # steps in same group run in parallel
+    parallel_group: str | None = None  # steps in same group run in parallel
 
 
 class PipelineConfig(BaseModel):

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
 from pydantic import BaseModel, Field
 
@@ -22,9 +21,11 @@ class WorkflowConfig(BaseModel):
     env_secrets: list[str] = Field(
         default_factory=lambda: ["ANTHROPIC_API_KEY"]
     )
+    deploy_provider: str | None = None
+    deploy_secrets: dict[str, str] = Field(default_factory=dict)
 
 
-def generate_workflow(config: Optional[WorkflowConfig] = None) -> str:
+def generate_workflow(config: WorkflowConfig | None = None) -> str:
     """Generate a GitHub Actions workflow YAML string."""
     cfg = config or WorkflowConfig()
 
@@ -108,7 +109,8 @@ def _build_steps_block(cfg: WorkflowConfig) -> str:
         "      - name: Run dockcheck policy check\n"
         "        run: |\n"
         "          git diff origin/main...HEAD > /tmp/pr.diff\n"
-        "          dockcheck check --diff /tmp/pr.diff --json-output > /tmp/check-result.json\n"
+        "          dockcheck check --diff /tmp/pr.diff"
+        " --json-output > /tmp/check-result.json\n"
         "        continue-on-error: true"
     )
 
@@ -118,6 +120,11 @@ def _build_steps_block(cfg: WorkflowConfig) -> str:
         "        run: dockcheck run\n"
         "        continue-on-error: true"
     )
+
+    # Provider-specific deploy step
+    deploy_step = _build_deploy_step(cfg)
+    if deploy_step:
+        steps.append(deploy_step)
 
     # Post PR comment
     if cfg.post_pr_comment:
@@ -130,7 +137,9 @@ def _build_steps_block(cfg: WorkflowConfig) -> str:
             "            const fs = require('fs');\n"
             "            let body = '## dockcheck Results\\n\\n';\n"
             "            try {\n"
-            "              const result = JSON.parse(fs.readFileSync('/tmp/check-result.json', 'utf8'));\n"
+            "              const result = JSON.parse("
+            "fs.readFileSync("
+            "'/tmp/check-result.json', 'utf8'));\n"
             "              body += `**Verdict:** ${result.verdict}\\n\\n`;\n"
             "              if (result.reasons && result.reasons.length > 0) {\n"
             "                body += '**Reasons:**\\n';\n"
@@ -150,9 +159,38 @@ def _build_steps_block(cfg: WorkflowConfig) -> str:
     return "\n\n".join(steps)
 
 
+def _build_deploy_step(cfg: WorkflowConfig) -> str | None:
+    """Build a provider-specific deploy step, or None if no provider set."""
+    if not cfg.deploy_provider:
+        return None
+
+    if cfg.deploy_provider == "cloudflare":
+        with_block = "\n".join(
+            f"          {k}: ${{{{ secrets.{v} }}}}"
+            for k, v in cfg.deploy_secrets.items()
+        )
+        return (
+            "      - name: Deploy to Cloudflare Workers\n"
+            "        uses: cloudflare/wrangler-action@v3\n"
+            "        with:\n"
+            f"{with_block}"
+        )
+
+    if cfg.deploy_provider == "vercel":
+        return (
+            "      - name: Deploy to Vercel\n"
+            "        run: vercel deploy --prod --yes\n"
+            "        env:\n"
+            "          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}"
+        )
+
+    # Generic provider — just run dockcheck run
+    return None
+
+
 def write_workflow(
     target_dir: str = ".",
-    config: Optional[WorkflowConfig] = None,
+    config: WorkflowConfig | None = None,
 ) -> Path:
     """Generate and write the workflow YAML to .github/workflows/."""
     target = Path(target_dir) / ".github" / "workflows"

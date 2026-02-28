@@ -3,9 +3,7 @@ behaviour, parallel group execution, and policy integration."""
 
 from __future__ import annotations
 
-import asyncio
-from typing import Optional
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -27,7 +25,6 @@ from dockcheck.core.orchestrator import (
     _group_by_parallel,
 )
 from dockcheck.core.policy import Policy, PolicyEngine
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -85,7 +82,7 @@ def _escalate_result() -> AgentResult:
 
 def _make_orchestrator(
     *results: AgentResult,
-    policy: Optional[PolicyEngine] = None,
+    policy: PolicyEngine | None = None,
     max_retries: int = 1,
 ) -> Orchestrator:
     """Convenience factory: builds orchestrator with mocked dispatcher."""

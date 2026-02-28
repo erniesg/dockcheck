@@ -6,7 +6,7 @@ import json
 import logging
 import subprocess
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -27,14 +27,14 @@ class TerraformResult(BaseModel):
     stdout: str = ""
     stderr: str = ""
     return_code: int = 0
-    error: Optional[str] = None
+    error: str | None = None
     blocked: bool = False
-    block_reason: Optional[str] = None
+    block_reason: str | None = None
 
 
 class ResourceChange(BaseModel):
     address: str
-    action: List[str] = Field(default_factory=list)  # e.g. ["create"], ["destroy"]
+    action: list[str] = Field(default_factory=list)  # e.g. ["create"], ["destroy"]
     resource_type: str = ""
     name: str = ""
 
@@ -43,20 +43,20 @@ class PlanResult(BaseModel):
     success: bool
     command: str = "terraform plan"
     raw_json: str = ""
-    resource_changes: List[ResourceChange] = Field(default_factory=list)
+    resource_changes: list[ResourceChange] = Field(default_factory=list)
     add_count: int = 0
     change_count: int = 0
     destroy_count: int = 0
     stdout: str = ""
     stderr: str = ""
     return_code: int = 0
-    error: Optional[str] = None
+    error: str | None = None
     blocked: bool = False
-    block_reason: Optional[str] = None
+    block_reason: str | None = None
 
 
 def _run_terraform(
-    args: List[str],
+    args: list[str],
     workdir: str,
     timeout: int = 300,
 ) -> subprocess.CompletedProcess:  # type: ignore[type-arg]
@@ -72,7 +72,7 @@ def _run_terraform(
     )
 
 
-def _parse_plan_json(raw: str) -> Dict[str, Any]:
+def _parse_plan_json(raw: str) -> dict[str, Any]:
     """Parse terraform plan JSON output, returning an empty dict on failure."""
     try:
         return json.loads(raw)
@@ -81,9 +81,9 @@ def _parse_plan_json(raw: str) -> Dict[str, Any]:
         return {}
 
 
-def _extract_resource_changes(plan_data: Dict[str, Any]) -> List[ResourceChange]:
+def _extract_resource_changes(plan_data: dict[str, Any]) -> list[ResourceChange]:
     """Extract resource changes from parsed terraform plan output."""
-    changes: List[ResourceChange] = []
+    changes: list[ResourceChange] = []
     for rc in plan_data.get("resource_changes", []):
         change = rc.get("change", {})
         actions = change.get("actions", [])
@@ -98,7 +98,7 @@ def _extract_resource_changes(plan_data: Dict[str, Any]) -> List[ResourceChange]
     return changes
 
 
-def _count_actions(changes: List[ResourceChange]) -> tuple:  # type: ignore[type-arg]
+def _count_actions(changes: list[ResourceChange]) -> tuple:  # type: ignore[type-arg]
     """Return (add, change, destroy) counts from a list of ResourceChange objects."""
     add = sum(1 for c in changes if c.action == ["create"])
     change = sum(1 for c in changes if c.action == ["update"])
@@ -125,7 +125,7 @@ class TerraformTool:
     def __init__(
         self,
         workdir: str = "./infra",
-        policy_engine: Optional[PolicyEngine] = None,
+        policy_engine: PolicyEngine | None = None,
     ) -> None:
         self.workdir = workdir
         self.policy_engine = policy_engine

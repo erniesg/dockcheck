@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -17,7 +16,6 @@ from dockcheck.agents.dispatch import (
     _parse_codex_output,
 )
 from dockcheck.agents.schemas import AgentResult
-
 
 # ---------------------------------------------------------------------------
 # Helpers

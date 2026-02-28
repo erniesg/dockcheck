@@ -3,21 +3,20 @@
 from __future__ import annotations
 
 import subprocess
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from dockcheck.core.policy import NotificationChannel
 from dockcheck.tools.notify import (
+    _SEVERITY_PREFIX,
     NotificationMessage,
     Notifier,
     SendResult,
     _build_slack_payload,
     _format_github_body,
     _format_stdout,
-    _SEVERITY_PREFIX,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

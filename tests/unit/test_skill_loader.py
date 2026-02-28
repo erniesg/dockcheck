@@ -26,9 +26,9 @@ class TestSkillDiscovery:
 
     def test_discover_finds_all_built_in_skills(self):
         loader = SkillLoader(str(BUILT_IN_SKILLS_DIR))
-        found = {m.name for m in loader.discover()}
         # Each SKILL.md H1 should map to one of the expected display names;
         # use directory-level check as the canonical identifier
+        loader.discover()  # verify no exceptions
         dirs_found = {m.path.parent.name for m in loader.discover()}
         assert EXPECTED_SKILL_DIRS == dirs_found
 

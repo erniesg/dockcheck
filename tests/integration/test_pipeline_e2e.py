@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -11,7 +10,6 @@ from click.testing import CliRunner
 from dockcheck.cli import cli
 from dockcheck.core.confidence import AgentStepResult, ConfidenceScorer
 from dockcheck.core.policy import PolicyEngine, Verdict
-
 
 FIXTURES = Path(__file__).parent.parent / "fixtures"
 

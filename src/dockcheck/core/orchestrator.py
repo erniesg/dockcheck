@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from abc import ABC, abstractmethod
-from typing import Optional
 
 from dockcheck.agents.dispatch import AgentDispatcher
 from dockcheck.agents.schemas import (
@@ -19,6 +18,8 @@ from dockcheck.agents.schemas import (
 from dockcheck.core.confidence import (
     AgentStepResult,
     ConfidenceScorer,
+)
+from dockcheck.core.confidence import (
     Finding as CoreFinding,
 )
 from dockcheck.core.policy import PolicyEngine, Verdict
@@ -35,7 +36,7 @@ class Notifier(ABC):
     """Abstract notifier — send messages about pipeline events."""
 
     @abstractmethod
-    def notify(self, event: str, message: str, context: Optional[dict] = None) -> None:
+    def notify(self, event: str, message: str, context: dict | None = None) -> None:
         """Send a notification.
 
         Args:
@@ -49,7 +50,7 @@ class Notifier(ABC):
 class StdoutNotifier(Notifier):
     """Simple notifier that prints events to stdout."""
 
-    def notify(self, event: str, message: str, context: Optional[dict] = None) -> None:
+    def notify(self, event: str, message: str, context: dict | None = None) -> None:
         ctx_str = f" | {context}" if context else ""
         print(f"[dockcheck/{event.upper()}] {message}{ctx_str}")
 
@@ -57,7 +58,7 @@ class StdoutNotifier(Notifier):
 class NullNotifier(Notifier):
     """No-op notifier for testing and silent operation."""
 
-    def notify(self, event: str, message: str, context: Optional[dict] = None) -> None:
+    def notify(self, event: str, message: str, context: dict | None = None) -> None:
         pass  # intentionally silent
 
 
@@ -167,9 +168,9 @@ class Orchestrator:
     def __init__(
         self,
         policy_engine: PolicyEngine,
-        dispatcher: Optional[AgentDispatcher] = None,
-        scorer: Optional[ConfidenceScorer] = None,
-        notifier: Optional[Notifier] = None,
+        dispatcher: AgentDispatcher | None = None,
+        scorer: ConfidenceScorer | None = None,
+        notifier: Notifier | None = None,
         max_retries: int = 1,
     ) -> None:
         self._policy = policy_engine
@@ -185,7 +186,7 @@ class Orchestrator:
     async def run_pipeline(
         self,
         pipeline: PipelineConfig,
-        context: Optional[dict] = None,
+        context: dict | None = None,
     ) -> PipelineResult:
         """Execute the full pipeline defined by *pipeline*.
 

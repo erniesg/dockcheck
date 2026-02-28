@@ -5,8 +5,6 @@ from pathlib import Path
 import pytest
 
 from dockcheck.core.policy import (
-    ConfidenceThresholds,
-    EvaluationResult,
     Policy,
     PolicyEngine,
     Verdict,

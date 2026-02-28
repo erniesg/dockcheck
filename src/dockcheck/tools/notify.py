@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import subprocess
 import sys
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Literal
 
 import httpx
 from pydantic import BaseModel, Field
@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 Severity = Literal["info", "warning", "error", "critical"]
 
 # Severity → emoji-free prefix for stdout formatting
-_SEVERITY_PREFIX: Dict[str, str] = {
+_SEVERITY_PREFIX: dict[str, str] = {
     "info": "[INFO]",
     "warning": "[WARNING]",
     "error": "[ERROR]",
@@ -25,20 +25,20 @@ _SEVERITY_PREFIX: Dict[str, str] = {
 
 class NotificationChannel(BaseModel):
     type: str  # "stdout" | "slack" | "github"
-    webhook_url: Optional[str] = None
+    webhook_url: str | None = None
 
 
 class NotificationMessage(BaseModel):
     title: str
     body: str
     severity: Severity = "info"
-    metadata: Dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class SendResult(BaseModel):
     channel: str
     success: bool
-    error: Optional[str] = None
+    error: str | None = None
 
 
 class Notifier:
@@ -54,7 +54,7 @@ class Notifier:
     - ``github`` — uses ``gh pr comment`` CLI; requires ``gh`` on PATH
     """
 
-    def __init__(self, channels: Optional[List[NotificationChannel]] = None) -> None:
+    def __init__(self, channels: list[NotificationChannel] | None = None) -> None:
         if channels is None:
             channels = [NotificationChannel(type="stdout")]
         self.channels = channels
@@ -63,9 +63,9 @@ class Notifier:
     # Public dispatch
     # ------------------------------------------------------------------
 
-    def send(self, message: NotificationMessage) -> List[SendResult]:
+    def send(self, message: NotificationMessage) -> list[SendResult]:
         """Send *message* to all configured channels. Never raises."""
-        results: List[SendResult] = []
+        results: list[SendResult] = []
         for channel in self.channels:
             if channel.type == "stdout":
                 results.append(self.send_stdout(message))
@@ -119,7 +119,10 @@ class Notifier:
         try:
             response = httpx.post(webhook_url, json=payload, timeout=10)
             response.raise_for_status()
-            logger.info("Slack notification sent: title=%r status=%s", message.title, response.status_code)
+            logger.info(
+                "Slack notification sent: title=%r status=%s",
+                message.title, response.status_code,
+            )
             return SendResult(channel="slack", success=True)
         except httpx.HTTPStatusError as exc:
             error_msg = f"Slack HTTP error {exc.response.status_code}: {exc.response.text}"
@@ -180,7 +183,7 @@ def _format_stdout(message: NotificationMessage, prefix: str) -> str:
     return "\n".join(lines)
 
 
-def _build_slack_payload(message: NotificationMessage) -> Dict[str, Any]:
+def _build_slack_payload(message: NotificationMessage) -> dict[str, Any]:
     """Build a Slack API-compatible payload with Block Kit formatting."""
     severity_icons = {
         "info": ":information_source:",
@@ -190,7 +193,7 @@ def _build_slack_payload(message: NotificationMessage) -> Dict[str, Any]:
     }
     icon = severity_icons.get(message.severity, ":information_source:")
     header = f"{icon} *{message.title}*"
-    blocks: List[Dict[str, Any]] = [
+    blocks: list[dict[str, Any]] = [
         {"type": "section", "text": {"type": "mrkdwn", "text": header}},
         {"type": "section", "text": {"type": "mrkdwn", "text": message.body}},
     ]

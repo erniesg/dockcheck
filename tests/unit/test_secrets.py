@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 import logging
-import os
 from pathlib import Path
 
 import pytest
 
 from dockcheck.tools.secrets import MaskedSecret, SecretProvider, _parse_env_file
-
 
 # ---------------------------------------------------------------------------
 # MaskedSecret

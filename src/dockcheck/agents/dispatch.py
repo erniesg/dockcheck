@@ -5,9 +5,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Any, Optional
+from typing import Any
 
-from dockcheck.agents.schemas import AgentResult, Finding, FindingSeverity
+from dockcheck.agents.schemas import AgentResult
 
 logger = logging.getLogger(__name__)
 
@@ -312,7 +312,7 @@ class AgentDispatcher:
                     proc.communicate(),
                     timeout=float(timeout),
                 )
-            except asyncio.TimeoutError:
+            except (TimeoutError, asyncio.TimeoutError):  # noqa: UP041
                 proc.kill()
                 await proc.communicate()
                 raise DispatchError(

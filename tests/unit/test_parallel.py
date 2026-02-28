@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -16,7 +15,7 @@ from dockcheck.agents.parallel import (
     RunMetrics,
     TurnTracker,
 )
-from dockcheck.core.confidence import AgentStepResult, Finding
+from dockcheck.core.confidence import AgentStepResult
 
 
 class TestTurnTracker:

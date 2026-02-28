@@ -8,9 +8,7 @@ import pytest
 from dockcheck.core.confidence import (
     ActionNeeded,
     AgentStepResult,
-    ConfidenceScore,
     ConfidenceScorer,
-    Finding,
 )
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "mock_agent_responses"
