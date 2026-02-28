@@ -57,6 +57,7 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP"]
+ignore = ["UP042"]
 
 [tool.coverage.run]
 source = ["dockcheck"]
