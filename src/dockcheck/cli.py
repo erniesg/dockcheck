@@ -417,26 +417,165 @@ def run(
     "--dir", "target_dir", type=click.Path(), default=".",
     help="Project directory.",
 )
-def deploy(provider: str | None, target_dir: str) -> None:
-    """Deploy the project using the detected or specified provider."""
-    from dockcheck.init.detect import RepoDetector
+@click.option("--skip-lint", is_flag=True, help="Skip lint step")
+@click.option("--skip-test", is_flag=True, help="Skip test step")
+@click.option("--dry-run", is_flag=True, help="Run preflight only, don't deploy")
+@click.option(
+    "--non-interactive", is_flag=True,
+    help="Skip interactive prompts (fail if secrets missing).",
+)
+def deploy(
+    provider: str | None,
+    target_dir: str,
+    skip_lint: bool,
+    skip_test: bool,
+    dry_run: bool,
+    non_interactive: bool,
+) -> None:
+    """Deploy the project: preflight -> init -> lint -> test -> check -> deploy.
+
+    Auto-detects the deploy provider, initializes .dockcheck/ if needed,
+    bootstraps auth, runs quality checks, and deploys.
+    """
+    from dockcheck.init.preflight import PreflightChecker
 
     target = Path(target_dir).resolve()
 
-    if not provider:
-        detector = RepoDetector()
-        ctx = detector.detect(str(target))
-        provider = _detect_deploy_provider(target, ctx)
+    # --- Preflight -----------------------------------------------------------
+    click.echo("Preflight checks...\n")
+    checker = PreflightChecker()
+    preflight = checker.check(str(target))
 
-    if not provider:
-        click.echo("Error: no deploy provider detected.", err=True)
-        click.echo("Use --provider to specify one, or add a wrangler.toml/vercel.json.", err=True)
+    # Override provider if explicitly set
+    if provider:
+        preflight.provider_name = provider
+
+    # Display checklist
+    for item in preflight.items:
+        icon = "ok" if item.passed else ("--" if not item.required else "FAIL")
+        click.echo(f"  [{icon:>4}] {item.name}: {item.message}")
+
+    click.echo()
+
+    # Handle blockers
+    if preflight.missing_cli:
+        click.echo(
+            f"Error: {preflight.missing_cli} CLI not found on PATH.", err=True
+        )
+        click.echo(
+            f"Install it first: npm install -g {preflight.missing_cli}",
+            err=True,
+        )
         sys.exit(1)
 
-    click.echo(f"Deploying via {provider}...")
-    result = _run_deploy(provider, str(target))
-    if not result:
+    if not preflight.provider_name:
+        click.echo("Error: no deploy target detected.", err=True)
+        click.echo(
+            "Add a wrangler.toml, vercel.json, or use --provider.", err=True
+        )
         sys.exit(1)
+
+    # --- Auth bootstrap (if needed) ------------------------------------------
+    if preflight.needs_auth:
+        from dockcheck.init.auth import AuthBootstrapper
+        from dockcheck.init.providers import ProviderRegistry
+
+        registry = ProviderRegistry()
+        prov_spec = registry.get(preflight.provider_name)
+        auth = AuthBootstrapper(env_file=str(target / ".env"))
+
+        if non_interactive:
+            click.echo("Missing secrets (set in env or .env):")
+            for name in preflight.missing_secrets:
+                matching = [
+                    s for s in prov_spec.required_secrets if s.name == name
+                ]
+                url = matching[0].setup_url if matching else ""
+                click.echo(f"  {name} — {url}")
+            sys.exit(1)
+
+        click.echo("Auth setup required:")
+        status = auth.check(prov_spec)
+        collected = auth.prompt_missing(status)
+
+        if collected:
+            auth.store_local(collected, env_file=str(target / ".env"))
+            click.echo("Stored to .env")
+            auth.ensure_gitignore(str(target))
+
+            set_gh = click.confirm("Set as GitHub Secrets?", default=True)
+            if set_gh:
+                ok = auth.store_github(collected)
+                click.echo("  Done" if ok else "  Partial (check warnings)")
+        click.echo()
+
+    # --- Auto-init (if needed) -----------------------------------------------
+    if preflight.needs_init:
+        click.echo("Initializing .dockcheck/...")
+        dockcheck_dir = target / ".dockcheck"
+        _auto_init(target, dockcheck_dir, preflight.provider_name)
+        click.echo()
+
+    if dry_run:
+        click.echo("Preflight passed. Use without --dry-run to deploy.")
+        return
+
+    # --- Run pipeline: lint -> test -> check -> deploy -----------------------
+    from dockcheck.init.detect import RepoDetector
+
+    detector = RepoDetector()
+    ctx = detector.detect(str(target))
+
+    steps: list[tuple[str, str | None]] = []
+
+    if not skip_lint and ctx.lint_command:
+        steps.append(("LINT", ctx.lint_command))
+    if not skip_lint and ctx.format_command:
+        steps.append(("FORMAT", ctx.format_command))
+    if not skip_test and ctx.test_command:
+        steps.append(("TEST", ctx.test_command))
+
+    steps.append(("CHECK", "dockcheck check"))
+    steps.append(("DEPLOY", f"deploy:{preflight.provider_name}"))
+
+    click.echo("Running pipeline...\n")
+
+    for step_name, cmd in steps:
+        if cmd and cmd.startswith("deploy:"):
+            provider_name = cmd.split(":", 1)[1]
+            click.echo(f"[{step_name}] Deploying via {provider_name}...")
+            ok = _run_deploy(provider_name, str(target))
+            if not ok:
+                sys.exit(1)
+            continue
+
+        if cmd == "dockcheck check":
+            click.echo(f"[{step_name}] Evaluating policy...")
+            try:
+                policy_file = _find_policy_quiet(None, target)
+                if policy_file:
+                    engine = PolicyEngine.from_yaml(policy_file)
+                    eval_result = engine.evaluate()
+                    if eval_result.verdict == Verdict.BLOCK:
+                        click.echo(
+                            f"  BLOCKED: {'; '.join(eval_result.reasons)}"
+                        )
+                        sys.exit(2)
+                    click.echo(f"  {eval_result.verdict.value.upper()}")
+                else:
+                    click.echo("  No policy found, skipping.")
+            except Exception as exc:
+                click.echo(f"  Warning: {exc}")
+            continue
+
+        click.echo(f"[{step_name}] {cmd}")
+        exit_code = _run_command(cmd, str(target))
+        if exit_code != 0:
+            click.echo(f"\n  FAILED (exit code {exit_code})")
+            sys.exit(exit_code)
+        click.echo("  OK")
+
+    click.echo("\nPipeline complete.")
 
 
 @cli.command()
@@ -454,6 +593,43 @@ def validate(policy_path: str | None) -> None:
     except Exception as e:
         click.echo(f"Policy invalid: {e}", err=True)
         sys.exit(1)
+
+
+def _auto_init(
+    target: Path, dockcheck_dir: Path, provider_name: str
+) -> None:
+    """Lightweight auto-init: generate policy + workflow without prompts."""
+    from dockcheck.github.action import WorkflowConfig, write_workflow
+    from dockcheck.init.detect import RepoDetector
+    from dockcheck.init.providers import ProviderRegistry
+
+    detector = RepoDetector()
+    ctx = detector.detect(str(target))
+    registry = ProviderRegistry()
+    prov_spec = registry.get(provider_name)
+
+    dockcheck_dir.mkdir(parents=True, exist_ok=True)
+    (dockcheck_dir / "skills").mkdir(exist_ok=True)
+
+    policy = _default_policy("hackathon")
+    (dockcheck_dir / "policy.yaml").write_text(policy)
+
+    env_secrets = [s.name for s in prov_spec.required_secrets]
+    wf_config = WorkflowConfig(
+        trigger_on_push=True,
+        env_secrets=env_secrets,
+        deploy_provider=prov_spec.name,
+        deploy_secrets=prov_spec.github_action_secrets,
+        language=ctx.language,
+        lint_command=ctx.lint_command,
+        format_command=ctx.format_command,
+        test_command=ctx.test_command,
+        build_command=ctx.build_command,
+    )
+    wf_path = write_workflow(str(target), wf_config)
+
+    click.echo(f"  Generated: {dockcheck_dir / 'policy.yaml'}")
+    click.echo(f"  Generated: {wf_path}")
 
 
 def _find_policy_quiet(

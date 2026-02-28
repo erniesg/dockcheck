@@ -12,6 +12,18 @@ from click.testing import CliRunner
 
 from dockcheck.cli import _load_env_file, _run_deploy, cli
 
+# Mock subprocess that returns empty/failure for all calls (git, gh, etc.)
+_MOCK_SUBPROCESS_EMPTY = subprocess.CompletedProcess(
+    args=[], returncode=128, stdout="", stderr=""
+)
+
+
+def _mock_subprocess_factory(**overrides):
+    """Create a mock subprocess.run that returns empty results."""
+    def mock_run(*args, **kwargs):
+        return _MOCK_SUBPROCESS_EMPTY
+    return mock_run
+
 
 class TestDeployCommand:
     @pytest.fixture()
@@ -20,38 +32,52 @@ class TestDeployCommand:
 
     def test_deploy_no_provider_detected(self, runner):
         with runner.isolated_filesystem():
-            result = runner.invoke(cli, ["deploy"])
+            with patch("subprocess.run", return_value=_MOCK_SUBPROCESS_EMPTY):
+                result = runner.invoke(
+                    cli, ["deploy", "--non-interactive"]
+                )
         assert result.exit_code != 0
-        assert "no deploy provider" in result.output.lower() or result.exit_code == 1
 
     def test_deploy_with_explicit_provider_not_available(self, runner):
         with runner.isolated_filesystem():
-            with patch("shutil.which", return_value=None):
-                result = runner.invoke(cli, ["deploy", "--provider", "cloudflare"])
+            Path("wrangler.toml").write_text('name = "test"')
+            Path("package.json").write_text('{"name": "test"}')
+            with (
+                patch("subprocess.run", return_value=_MOCK_SUBPROCESS_EMPTY),
+                patch("shutil.which", return_value=None),
+            ):
+                result = runner.invoke(
+                    cli,
+                    ["deploy", "--provider", "cloudflare", "--non-interactive"],
+                )
         assert result.exit_code != 0
-        assert "not found" in result.output.lower() or result.exit_code == 1
+        assert "not found" in result.output.lower()
 
     def test_deploy_detects_provider_from_wrangler(self, runner):
         with runner.isolated_filesystem():
             Path("wrangler.toml").write_text('name = "test"')
             Path("package.json").write_text('{"name": "test"}')
+            Path(".gitignore").write_text(".env\n")
 
-            mock_git = subprocess.CompletedProcess(
-                args=[], returncode=128, stdout="", stderr=""
-            )
             mock_deploy = MagicMock()
             mock_deploy.success = True
             mock_deploy.url = "https://test.workers.dev"
 
             with (
-                patch("subprocess.run", return_value=mock_git),
+                patch("subprocess.run", return_value=_MOCK_SUBPROCESS_EMPTY),
                 patch("shutil.which", return_value="/usr/local/bin/wrangler"),
+                patch("os.environ.get", side_effect=lambda k, d=None: {
+                    "CLOUDFLARE_API_TOKEN": "tok",
+                    "CLOUDFLARE_ACCOUNT_ID": "acc",
+                }.get(k, d)),
                 patch(
                     "dockcheck.tools.deploy.CloudflareProvider.deploy",
                     return_value=mock_deploy,
                 ),
             ):
-                result = runner.invoke(cli, ["deploy"])
+                result = runner.invoke(
+                    cli, ["deploy", "--non-interactive"]
+                )
 
             assert result.exit_code == 0
             assert "Deployed successfully" in result.output
@@ -60,45 +86,132 @@ class TestDeployCommand:
         with runner.isolated_filesystem():
             Path("wrangler.toml").write_text('name = "test"')
             Path("package.json").write_text('{"name": "test"}')
+            Path(".gitignore").write_text(".env\n")
 
-            mock_git = subprocess.CompletedProcess(
-                args=[], returncode=128, stdout="", stderr=""
-            )
             mock_deploy = MagicMock()
             mock_deploy.success = True
             mock_deploy.url = "https://hello.workers.dev"
 
             with (
-                patch("subprocess.run", return_value=mock_git),
+                patch("subprocess.run", return_value=_MOCK_SUBPROCESS_EMPTY),
                 patch("shutil.which", return_value="/usr/local/bin/wrangler"),
-                patch(
-                    "dockcheck.tools.deploy.CloudflareProvider.deploy",
-                    return_value=mock_deploy,
-                ),
-            ):
-                result = runner.invoke(cli, ["deploy"])
-
-            assert "https://hello.workers.dev" in result.output
-
-    def test_deploy_failure_shows_error(self, runner):
-        with runner.isolated_filesystem():
-            mock_deploy = MagicMock()
-            mock_deploy.success = False
-            mock_deploy.error = "Authentication failed"
-            mock_deploy.stderr = ""
-
-            with (
-                patch("shutil.which", return_value="/usr/local/bin/wrangler"),
+                patch("os.environ.get", side_effect=lambda k, d=None: {
+                    "CLOUDFLARE_API_TOKEN": "tok",
+                    "CLOUDFLARE_ACCOUNT_ID": "acc",
+                }.get(k, d)),
                 patch(
                     "dockcheck.tools.deploy.CloudflareProvider.deploy",
                     return_value=mock_deploy,
                 ),
             ):
                 result = runner.invoke(
-                    cli, ["deploy", "--provider", "cloudflare"]
+                    cli, ["deploy", "--non-interactive"]
+                )
+
+            assert "https://hello.workers.dev" in result.output
+
+    def test_deploy_failure_shows_error(self, runner):
+        with runner.isolated_filesystem():
+            Path("wrangler.toml").write_text('name = "test"')
+            Path("package.json").write_text('{"name": "test"}')
+            Path(".gitignore").write_text(".env\n")
+
+            mock_deploy = MagicMock()
+            mock_deploy.success = False
+            mock_deploy.error = "Authentication failed"
+            mock_deploy.stderr = ""
+
+            with (
+                patch("subprocess.run", return_value=_MOCK_SUBPROCESS_EMPTY),
+                patch("shutil.which", return_value="/usr/local/bin/wrangler"),
+                patch("os.environ.get", side_effect=lambda k, d=None: {
+                    "CLOUDFLARE_API_TOKEN": "tok",
+                    "CLOUDFLARE_ACCOUNT_ID": "acc",
+                }.get(k, d)),
+                patch(
+                    "dockcheck.tools.deploy.CloudflareProvider.deploy",
+                    return_value=mock_deploy,
+                ),
+            ):
+                result = runner.invoke(
+                    cli,
+                    ["deploy", "--provider", "cloudflare", "--non-interactive"],
                 )
 
             assert result.exit_code != 0
+
+    def test_deploy_auto_inits(self, runner):
+        """Deploy should auto-create .dockcheck/ if missing."""
+        with runner.isolated_filesystem():
+            Path("wrangler.toml").write_text('name = "test"')
+            Path("package.json").write_text('{"name": "test"}')
+            Path(".gitignore").write_text(".env\n")
+
+            mock_deploy = MagicMock()
+            mock_deploy.success = True
+            mock_deploy.url = "https://test.workers.dev"
+
+            with (
+                patch("subprocess.run", return_value=_MOCK_SUBPROCESS_EMPTY),
+                patch("shutil.which", return_value="/usr/local/bin/wrangler"),
+                patch("os.environ.get", side_effect=lambda k, d=None: {
+                    "CLOUDFLARE_API_TOKEN": "tok",
+                    "CLOUDFLARE_ACCOUNT_ID": "acc",
+                }.get(k, d)),
+                patch(
+                    "dockcheck.tools.deploy.CloudflareProvider.deploy",
+                    return_value=mock_deploy,
+                ),
+            ):
+                result = runner.invoke(
+                    cli, ["deploy", "--non-interactive"]
+                )
+
+            assert result.exit_code == 0
+            assert Path(".dockcheck/policy.yaml").exists()
+            assert Path(".github/workflows/dockcheck.yml").exists()
+            assert "Initializing" in result.output
+
+    def test_deploy_dry_run_preflight_only(self, runner):
+        """--dry-run should show preflight without deploying."""
+        with runner.isolated_filesystem():
+            Path("wrangler.toml").write_text('name = "test"')
+            Path("package.json").write_text('{"name": "test"}')
+
+            with (
+                patch("subprocess.run", return_value=_MOCK_SUBPROCESS_EMPTY),
+                patch("shutil.which", return_value="/usr/local/bin/wrangler"),
+                patch("os.environ.get", side_effect=lambda k, d=None: {
+                    "CLOUDFLARE_API_TOKEN": "tok",
+                    "CLOUDFLARE_ACCOUNT_ID": "acc",
+                }.get(k, d)),
+            ):
+                result = runner.invoke(
+                    cli,
+                    ["deploy", "--dry-run", "--non-interactive"],
+                )
+
+            assert result.exit_code == 0
+            assert "Preflight" in result.output
+            assert "Deployed" not in result.output
+
+    def test_deploy_missing_auth_non_interactive_fails(self, runner):
+        """Non-interactive deploy with missing secrets should fail."""
+        with runner.isolated_filesystem():
+            Path("wrangler.toml").write_text('name = "test"')
+            Path("package.json").write_text('{"name": "test"}')
+
+            with (
+                patch("subprocess.run", return_value=_MOCK_SUBPROCESS_EMPTY),
+                patch("shutil.which", return_value="/usr/local/bin/wrangler"),
+            ):
+                result = runner.invoke(
+                    cli,
+                    ["deploy", "--non-interactive"],
+                )
+
+            assert result.exit_code != 0
+            assert "Missing secrets" in result.output
 
 
 class TestRunPipeline:
