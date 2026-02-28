@@ -1,4 +1,4 @@
-"""CLI entrypoint — dockcheck init, check, run, deploy, validate."""
+"""CLI entrypoint — dockcheck init, check, run, deploy, ship, validate."""
 
 from __future__ import annotations
 
@@ -366,46 +366,52 @@ def run(
             pass
         return
 
-    # Execute pipeline
-    click.echo(f"Running pipeline in {target}...\n")
+    # Execute pipeline (run = no deploy by default)
+    _run_pipeline(
+        target=target,
+        provider_name=deploy_provider_name if not skip_deploy else None,
+        skip_lint=skip_lint,
+        skip_test=skip_test,
+        include_deploy=not skip_deploy and deploy_provider_name is not None,
+    )
 
-    for step_name, cmd in steps:
-        if cmd and cmd.startswith("deploy:"):
-            # Deploy step — use deploy provider
-            provider_name = cmd.split(":", 1)[1]
-            click.echo(f"[{step_name}] Deploying via {provider_name}...")
-            result = _run_deploy(provider_name, str(target))
-            if not result:
-                sys.exit(1)
-            continue
 
-        if cmd == "dockcheck check":
-            # Policy check — use internal engine
-            click.echo(f"[{step_name}] Evaluating policy...")
-            try:
-                policy_file = _find_policy_quiet(policy_path, target)
-                if policy_file:
-                    engine = PolicyEngine.from_yaml(policy_file)
-                    eval_result = engine.evaluate()
-                    if eval_result.verdict == Verdict.BLOCK:
-                        click.echo(f"  BLOCKED: {'; '.join(eval_result.reasons)}")
-                        sys.exit(2)
-                    click.echo(f"  {eval_result.verdict.value.upper()}")
-                else:
-                    click.echo("  No policy found, skipping.")
-            except Exception as exc:
-                click.echo(f"  Warning: {exc}")
-            continue
+@cli.command()
+@click.option(
+    "--provider", type=click.Choice(["cloudflare", "vercel"]),
+    default=None, help="Deploy provider (auto-detected if not set).",
+)
+@click.option(
+    "--dir", "target_dir", type=click.Path(), default=".",
+    help="Project directory.",
+)
+def deploy(provider: str | None, target_dir: str) -> None:
+    """Deploy the project using the detected or specified provider.
 
-        # Regular command — run via subprocess
-        click.echo(f"[{step_name}] {cmd}")
-        exit_code = _run_command(cmd, str(target))
-        if exit_code != 0:
-            click.echo(f"\n  FAILED (exit code {exit_code})")
-            sys.exit(exit_code)
-        click.echo("  OK")
+    Assumes the project is already initialized and checks have passed.
+    For the full workflow, use `dockcheck ship` instead.
+    """
+    from dockcheck.init.detect import RepoDetector
 
-    click.echo("\nPipeline complete.")
+    target = Path(target_dir).resolve()
+
+    if not provider:
+        detector = RepoDetector()
+        ctx = detector.detect(str(target))
+        provider = _detect_deploy_provider(target, ctx)
+
+    if not provider:
+        click.echo("Error: no deploy provider detected.", err=True)
+        click.echo(
+            "Use --provider to specify one, or `dockcheck ship` for the full workflow.",
+            err=True,
+        )
+        sys.exit(1)
+
+    click.echo(f"Deploying via {provider}...")
+    ok = _run_deploy(provider, str(target))
+    if not ok:
+        sys.exit(1)
 
 
 @cli.command()
@@ -424,7 +430,7 @@ def run(
     "--non-interactive", is_flag=True,
     help="Skip interactive prompts (fail if secrets missing).",
 )
-def deploy(
+def ship(
     provider: str | None,
     target_dir: str,
     skip_lint: bool,
@@ -432,10 +438,17 @@ def deploy(
     dry_run: bool,
     non_interactive: bool,
 ) -> None:
-    """Deploy the project: preflight -> init -> lint -> test -> check -> deploy.
+    """Ship it: preflight -> init -> auth -> lint -> test -> check -> deploy.
 
-    Auto-detects the deploy provider, initializes .dockcheck/ if needed,
-    bootstraps auth, runs quality checks, and deploys.
+    The magic command. Auto-detects everything, initializes if needed,
+    bootstraps auth, runs quality checks, and deploys to production.
+
+    \b
+    Examples:
+        dockcheck ship                    # full flow, interactive
+        dockcheck ship --non-interactive  # CI mode, fail on missing secrets
+        dockcheck ship --dry-run          # preflight only
+        dockcheck ship --skip-test        # skip tests, ship fast
     """
     from dockcheck.init.preflight import PreflightChecker
 
@@ -517,65 +530,17 @@ def deploy(
         click.echo()
 
     if dry_run:
-        click.echo("Preflight passed. Use without --dry-run to deploy.")
+        click.echo("Preflight passed. Use without --dry-run to ship.")
         return
 
     # --- Run pipeline: lint -> test -> check -> deploy -----------------------
-    from dockcheck.init.detect import RepoDetector
-
-    detector = RepoDetector()
-    ctx = detector.detect(str(target))
-
-    steps: list[tuple[str, str | None]] = []
-
-    if not skip_lint and ctx.lint_command:
-        steps.append(("LINT", ctx.lint_command))
-    if not skip_lint and ctx.format_command:
-        steps.append(("FORMAT", ctx.format_command))
-    if not skip_test and ctx.test_command:
-        steps.append(("TEST", ctx.test_command))
-
-    steps.append(("CHECK", "dockcheck check"))
-    steps.append(("DEPLOY", f"deploy:{preflight.provider_name}"))
-
-    click.echo("Running pipeline...\n")
-
-    for step_name, cmd in steps:
-        if cmd and cmd.startswith("deploy:"):
-            provider_name = cmd.split(":", 1)[1]
-            click.echo(f"[{step_name}] Deploying via {provider_name}...")
-            ok = _run_deploy(provider_name, str(target))
-            if not ok:
-                sys.exit(1)
-            continue
-
-        if cmd == "dockcheck check":
-            click.echo(f"[{step_name}] Evaluating policy...")
-            try:
-                policy_file = _find_policy_quiet(None, target)
-                if policy_file:
-                    engine = PolicyEngine.from_yaml(policy_file)
-                    eval_result = engine.evaluate()
-                    if eval_result.verdict == Verdict.BLOCK:
-                        click.echo(
-                            f"  BLOCKED: {'; '.join(eval_result.reasons)}"
-                        )
-                        sys.exit(2)
-                    click.echo(f"  {eval_result.verdict.value.upper()}")
-                else:
-                    click.echo("  No policy found, skipping.")
-            except Exception as exc:
-                click.echo(f"  Warning: {exc}")
-            continue
-
-        click.echo(f"[{step_name}] {cmd}")
-        exit_code = _run_command(cmd, str(target))
-        if exit_code != 0:
-            click.echo(f"\n  FAILED (exit code {exit_code})")
-            sys.exit(exit_code)
-        click.echo("  OK")
-
-    click.echo("\nPipeline complete.")
+    _run_pipeline(
+        target=target,
+        provider_name=preflight.provider_name,
+        skip_lint=skip_lint,
+        skip_test=skip_test,
+        include_deploy=True,
+    )
 
 
 @cli.command()
@@ -630,6 +595,94 @@ def _auto_init(
 
     click.echo(f"  Generated: {dockcheck_dir / 'policy.yaml'}")
     click.echo(f"  Generated: {wf_path}")
+
+
+def _run_pipeline(
+    target: Path,
+    provider_name: str | None = None,
+    skip_lint: bool = False,
+    skip_test: bool = False,
+    include_deploy: bool = False,
+) -> None:
+    """Execute the pipeline: lint -> format -> test -> check -> deploy.
+
+    Exits with code 1 on the first step that fails.
+    """
+    from dockcheck.init.detect import RepoDetector
+
+    detector = RepoDetector()
+    ctx = detector.detect(str(target))
+
+    # Build step list
+    steps: list[tuple[str, str]] = []
+
+    if not skip_lint and ctx.lint_command:
+        steps.append(("LINT", ctx.lint_command))
+    if not skip_lint and ctx.format_command:
+        steps.append(("FORMAT", ctx.format_command))
+    if not skip_test and ctx.test_command:
+        steps.append(("TEST", ctx.test_command))
+
+    steps.append(("CHECK", "dockcheck check"))
+
+    if include_deploy and provider_name:
+        steps.append(("DEPLOY", f"deploy:{provider_name}"))
+
+    click.echo("Running pipeline...\n")
+    for i, (name, cmd) in enumerate(steps, 1):
+        click.echo(f"  [{i}/{len(steps)}] {name}: {cmd}")
+
+        if name == "CHECK":
+            policy_file = _find_policy_quiet(None, target)
+            if policy_file:
+                engine = PolicyEngine.from_yaml(policy_file)
+                result = engine.evaluate()
+                if result.verdict == Verdict.BLOCK:
+                    click.echo(
+                        "  FAILED: policy check blocked the deploy.", err=True
+                    )
+                    for reason in result.reasons:
+                        click.echo(f"    - {reason}", err=True)
+                    sys.exit(1)
+                click.echo(f"  -> {result.verdict.value.upper()}")
+            else:
+                click.echo("  -> skipped (no policy.yaml found)")
+            continue
+
+        if name == "DEPLOY":
+            ok = _run_deploy(provider_name, str(target))
+            if not ok:
+                click.echo(
+                    f"\n  Deploy failed. Check that {provider_name} CLI is "
+                    "installed and credentials are set.",
+                    err=True,
+                )
+                sys.exit(1)
+            continue
+
+        # Lint/format/test — run as subprocess
+        rc = _run_command(cmd, cwd=str(target))
+        if rc != 0:
+            click.echo(f"\n  {name} failed (exit code {rc}).", err=True)
+            if name == "LINT":
+                click.echo(
+                    "  Hint: fix lint errors above, or use --skip-lint to skip.",
+                    err=True,
+                )
+            elif name == "FORMAT":
+                click.echo(
+                    "  Hint: run the formatter to auto-fix, or use --skip-lint to skip.",
+                    err=True,
+                )
+            elif name == "TEST":
+                click.echo(
+                    "  Hint: fix failing tests above, or use --skip-test to skip.",
+                    err=True,
+                )
+            sys.exit(1)
+        click.echo("  -> passed")
+
+    click.echo("\nPipeline complete!")
 
 
 def _find_policy_quiet(
