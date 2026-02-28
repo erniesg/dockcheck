@@ -1,0 +1,17 @@
+diff --git a/old_module.py b/old_module.py
+deleted file mode 100644
+index 1234567..0000000
+--- a/old_module.py
++++ /dev/null
+@@ -1,5 +0,0 @@
+-def deprecated_function():
+-    pass
+diff --git a/another_old.py b/another_old.py
+deleted file mode 100644
+index 1234567..0000000
+--- a/another_old.py
++++ /dev/null
+@@ -1,3 +0,0 @@
+-# old code
+-def remove_me():
+-    pass

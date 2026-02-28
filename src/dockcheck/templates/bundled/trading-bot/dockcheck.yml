@@ -1,0 +1,15 @@
+project:
+  name: "{{project_name}}"
+  test_command: "pytest --tb=short -q"
+  build_command: "docker build -t {{project_name}} ."
+  dockerfile: "./Dockerfile"
+
+deploy:
+  staging:
+    target: docker
+    registry: "ghcr.io/org/{{project_name}}"
+  production:
+    target: docker
+    registry: "ghcr.io/org/{{project_name}}"
+    requires_staging: true
+    manual_approval: true

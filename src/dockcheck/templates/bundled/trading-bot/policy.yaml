@@ -1,0 +1,50 @@
+version: "1"
+
+hard_stops:
+  commands:
+    - pattern: "rm -rf"
+    - pattern: "rm -r /"
+    - pattern: "DROP TABLE"
+    - pattern: "DROP DATABASE"
+    - pattern: "git push --force"
+    - pattern: "git reset --hard"
+    - pattern: "terraform destroy"
+    - pattern: "kubectl delete namespace"
+    - pattern: "modify_position"
+    - pattern: "place_order"
+    - pattern: "cancel_all"
+  critical_paths:
+    - "**/production/**"
+    - "**/.env*"
+    - "**/secrets/**"
+    - "**/config/live/**"
+    - "**/trading/credentials/**"
+  circuit_breakers:
+    max_containers: 5
+    max_cost_per_run_usd: 10
+    max_deploys_per_hour: 3
+    max_file_deletes_per_turn: 10
+
+confidence_thresholds:
+  auto_deploy_staging: 0.95
+  auto_promote_prod: 0.99
+  notify_human: 0.8
+
+notifications:
+  on_deploy: true
+  on_block: true
+  on_rollback: true
+  channels:
+    - type: stdout
+    - type: github-comment
+    - type: slack
+      webhook_url: "${SLACK_WEBHOOK_URL}"
+
+skills:
+  enabled:
+    - analyze
+    - test
+    - test-writer
+    - deploy
+    - verify
+    - notify

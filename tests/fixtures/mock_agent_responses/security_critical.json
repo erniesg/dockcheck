@@ -1,0 +1,16 @@
+{
+  "step": "security",
+  "completed": true,
+  "confidence": 0.0,
+  "turns_used": 4,
+  "summary": "Critical: SQL injection vulnerability detected.",
+  "findings": [
+    {
+      "severity": "critical",
+      "message": "SQL injection in user input handling — raw string interpolation in query",
+      "file_path": "src/db/queries.py",
+      "line": 23
+    }
+  ],
+  "action_needed": "escalate"
+}

@@ -1,0 +1,16 @@
+{
+  "step": "analyze",
+  "completed": true,
+  "confidence": 0.95,
+  "turns_used": 3,
+  "summary": "Safe change: 2 files modified, no critical paths touched.",
+  "findings": [
+    {
+      "severity": "info",
+      "message": "Modified src/app.py — low blast radius",
+      "file_path": "src/app.py",
+      "line": null
+    }
+  ],
+  "action_needed": "none"
+}

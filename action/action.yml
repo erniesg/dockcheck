@@ -1,0 +1,93 @@
+name: 'dockcheck'
+description: 'Agentic CI/CD runtime — safe, automated deployment with AI coding agents'
+author: 'erniesg'
+
+inputs:
+  python-version:
+    description: 'Python version to use'
+    required: false
+    default: '3.11'
+  dockcheck-version:
+    description: 'dockcheck version to install (or "latest")'
+    required: false
+    default: 'latest'
+  command:
+    description: 'dockcheck command to run (check, run, validate)'
+    required: false
+    default: 'run'
+  policy-path:
+    description: 'Path to policy.yaml'
+    required: false
+    default: '.dockcheck/policy.yaml'
+  post-comment:
+    description: 'Post results as PR comment'
+    required: false
+    default: 'true'
+
+outputs:
+  verdict:
+    description: 'Policy check verdict (pass/fail/block)'
+  confidence:
+    description: 'Pipeline confidence score'
+  result-json:
+    description: 'Full result as JSON string'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install dockcheck
+      shell: bash
+      run: |
+        if [ "${{ inputs.dockcheck-version }}" = "latest" ]; then
+          pip install dockcheck
+        else
+          pip install dockcheck==${{ inputs.dockcheck-version }}
+        fi
+
+    - name: Run dockcheck
+      shell: bash
+      id: dockcheck
+      run: |
+        set +e
+
+        if [ "${{ inputs.command }}" = "check" ]; then
+          git diff origin/${{ github.base_ref }}...HEAD > /tmp/pr.diff 2>/dev/null || true
+          RESULT=$(dockcheck check --diff /tmp/pr.diff --policy "${{ inputs.policy-path }}" --json-output 2>&1)
+          EXIT_CODE=$?
+        elif [ "${{ inputs.command }}" = "run" ]; then
+          RESULT=$(dockcheck run --policy "${{ inputs.policy-path }}" 2>&1)
+          EXIT_CODE=$?
+        else
+          RESULT=$(dockcheck ${{ inputs.command }} --policy "${{ inputs.policy-path }}" 2>&1)
+          EXIT_CODE=$?
+        fi
+
+        echo "result<<EOF" >> $GITHUB_OUTPUT
+        echo "$RESULT" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+        echo "exit-code=$EXIT_CODE" >> $GITHUB_OUTPUT
+
+        # Extract verdict from JSON if available
+        VERDICT=$(echo "$RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('verdict','unknown'))" 2>/dev/null || echo "unknown")
+        echo "verdict=$VERDICT" >> $GITHUB_OUTPUT
+
+    - name: Post PR comment
+      if: ${{ inputs.post-comment == 'true' && github.event_name == 'pull_request' }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        BODY="## dockcheck Results\n\n"
+        BODY+="**Exit code:** ${{ steps.dockcheck.outputs.exit-code }}\n\n"
+        BODY+="\`\`\`\n${{ steps.dockcheck.outputs.result }}\n\`\`\`\n"
+
+        echo -e "$BODY" | gh pr comment ${{ github.event.pull_request.number }} --body-file -
+
+branding:
+  icon: 'shield'
+  color: 'blue'

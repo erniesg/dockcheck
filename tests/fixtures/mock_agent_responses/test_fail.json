@@ -1,0 +1,28 @@
+{
+  "step": "test",
+  "completed": true,
+  "confidence": 0.40,
+  "turns_used": 8,
+  "summary": "3 of 42 tests failed. Coverage dropped to 72%.",
+  "findings": [
+    {
+      "severity": "error",
+      "message": "test_login_flow failed: AssertionError",
+      "file_path": "tests/test_auth.py",
+      "line": 45
+    },
+    {
+      "severity": "error",
+      "message": "test_payment_processing failed: TimeoutError",
+      "file_path": "tests/test_payments.py",
+      "line": 102
+    },
+    {
+      "severity": "warning",
+      "message": "Coverage below 80% threshold",
+      "file_path": null,
+      "line": null
+    }
+  ],
+  "action_needed": "retry"
+}

@@ -1,0 +1,9 @@
+{
+  "step": "test",
+  "completed": true,
+  "confidence": 0.90,
+  "turns_used": 5,
+  "summary": "All 42 tests pass. Coverage: 94%.",
+  "findings": [],
+  "action_needed": "none"
+}
