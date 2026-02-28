@@ -162,8 +162,9 @@ class TestSmartInitE2E:
 
             result = runner.invoke(cli, ["run", "--dry-run"])
             assert result.exit_code == 0
-            assert "ANALYZE" in result.output
+            assert "CHECK" in result.output
             assert "DEPLOY" in result.output
+            assert "cloudflare" in result.output
 
     def test_init_with_env_secrets_present(self, runner, monkeypatch):
         """Init when env vars are already set should report all ready."""

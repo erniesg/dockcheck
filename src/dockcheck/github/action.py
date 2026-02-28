@@ -23,6 +23,13 @@ class WorkflowConfig(BaseModel):
     )
     deploy_provider: str | None = None
     deploy_secrets: dict[str, str] = Field(default_factory=dict)
+    # Detected project commands
+    language: str | None = None
+    install_command: str | None = None
+    lint_command: str | None = None
+    format_command: str | None = None
+    test_command: str | None = None
+    build_command: str | None = None
 
 
 def generate_workflow(config: WorkflowConfig | None = None) -> str:
@@ -85,23 +92,82 @@ def _build_steps_block(cfg: WorkflowConfig) -> str:
         "          fetch-depth: 0"
     )
 
-    # Setup Python
-    steps.append(
-        f"      - name: Set up Python\n"
-        f"        uses: actions/setup-python@v5\n"
-        f"        with:\n"
-        f"          python-version: '{cfg.python_version}'"
-    )
+    # Setup language runtime
+    if cfg.language in ("javascript", "typescript"):
+        steps.append(
+            "      - name: Set up Node.js\n"
+            "        uses: actions/setup-node@v4\n"
+            "        with:\n"
+            "          node-version: '20'"
+        )
+    else:
+        steps.append(
+            f"      - name: Set up Python\n"
+            f"        uses: actions/setup-python@v5\n"
+            f"        with:\n"
+            f"          python-version: '{cfg.python_version}'"
+        )
+
+    # Install project dependencies
+    install_cmd = cfg.install_command
+    if not install_cmd:
+        if cfg.language in ("javascript", "typescript"):
+            install_cmd = "npm ci"
+        else:
+            install_cmd = None
+
+    if install_cmd:
+        steps.append(
+            f"      - name: Install dependencies\n"
+            f"        run: {install_cmd}"
+        )
+
+    # Lint step
+    if cfg.lint_command:
+        steps.append(
+            f"      - name: Lint\n"
+            f"        run: {cfg.lint_command}"
+        )
+
+    # Format check step
+    if cfg.format_command:
+        steps.append(
+            f"      - name: Format check\n"
+            f"        run: {cfg.format_command}"
+        )
+
+    # Test step
+    if cfg.test_command:
+        steps.append(
+            f"      - name: Test\n"
+            f"        run: {cfg.test_command}"
+        )
+
+    # Build step
+    if cfg.build_command:
+        steps.append(
+            f"      - name: Build\n"
+            f"        run: {cfg.build_command}"
+        )
 
     # Install dockcheck
     if cfg.dockcheck_version == "latest":
-        install_cmd = "pip install dockcheck"
+        dockcheck_install = "pip install dockcheck"
     else:
-        install_cmd = f"pip install dockcheck=={cfg.dockcheck_version}"
+        dockcheck_install = f"pip install dockcheck=={cfg.dockcheck_version}"
+
+    # Only add Python setup for JS projects that need dockcheck
+    if cfg.language in ("javascript", "typescript"):
+        steps.append(
+            f"      - name: Set up Python (for dockcheck)\n"
+            f"        uses: actions/setup-python@v5\n"
+            f"        with:\n"
+            f"          python-version: '{cfg.python_version}'"
+        )
 
     steps.append(
         f"      - name: Install dockcheck\n"
-        f"        run: {install_cmd}"
+        f"        run: {dockcheck_install}"
     )
 
     # Run dockcheck check
@@ -111,13 +177,6 @@ def _build_steps_block(cfg: WorkflowConfig) -> str:
         "          git diff origin/main...HEAD > /tmp/pr.diff\n"
         "          dockcheck check --diff /tmp/pr.diff"
         " --json-output > /tmp/check-result.json\n"
-        "        continue-on-error: true"
-    )
-
-    # Run dockcheck pipeline
-    steps.append(
-        "      - name: Run dockcheck pipeline\n"
-        "        run: dockcheck run\n"
         "        continue-on-error: true"
     )
 

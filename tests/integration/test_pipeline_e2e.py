@@ -94,8 +94,7 @@ class TestCLIIntegration:
             result = runner.invoke(cli, ["run", "--dry-run"])
             assert result.exit_code == 0
             assert "Pipeline plan" in result.output
-            assert "ANALYZE" in result.output
-            assert "TEST" in result.output
+            assert "CHECK" in result.output
 
     def test_check_no_policy(self, runner):
         with runner.isolated_filesystem():

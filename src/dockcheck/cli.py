@@ -1,7 +1,8 @@
-"""CLI entrypoint — dockcheck init, check, run, validate."""
+"""CLI entrypoint — dockcheck init, check, run, deploy, validate."""
 
 from __future__ import annotations
 
+import subprocess
 import sys
 from pathlib import Path
 
@@ -220,13 +221,18 @@ def _init_smart(
     default_policy = _default_policy("hackathon")
     (dockcheck_dir / "policy.yaml").write_text(default_policy)
 
-    # Generate provider-aware workflow
+    # Generate provider-aware workflow with lint/test/build commands
     env_secrets = [s.name for s in selected.required_secrets]
     wf_config = WorkflowConfig(
         trigger_on_push=True,
         env_secrets=env_secrets,
         deploy_provider=selected.name,
         deploy_secrets=selected.github_action_secrets,
+        language=ctx.language,
+        lint_command=ctx.lint_command,
+        format_command=ctx.format_command,
+        test_command=ctx.test_command,
+        build_command=ctx.build_command,
     )
     wf_path = write_workflow(str(target), wf_config)
 
@@ -298,29 +304,139 @@ def check(
 
 @cli.command()
 @click.option("--policy", "policy_path", type=click.Path(), default=None)
+@click.option(
+    "--dir", "target_dir", type=click.Path(), default=".",
+    help="Project directory.",
+)
 @click.option("--dry-run", is_flag=True, help="Show pipeline plan without executing")
-@click.pass_context
-def run(ctx: click.Context, policy_path: str | None, dry_run: bool) -> None:
-    """Execute the full CI/CD pipeline."""
-    policy_file = _find_policy(policy_path)
-    engine = PolicyEngine.from_yaml(policy_file)
+@click.option("--skip-lint", is_flag=True, help="Skip lint step")
+@click.option("--skip-test", is_flag=True, help="Skip test step")
+@click.option("--skip-deploy", is_flag=True, help="Skip deploy step")
+def run(
+    policy_path: str | None,
+    target_dir: str,
+    dry_run: bool,
+    skip_lint: bool,
+    skip_test: bool,
+    skip_deploy: bool,
+) -> None:
+    """Execute the full CI/CD pipeline: lint -> test -> check -> deploy."""
+    from dockcheck.init.detect import RepoDetector
+
+    target = Path(target_dir).resolve()
+
+    # Detect project context
+    detector = RepoDetector()
+    ctx = detector.detect(str(target))
+
+    # Build pipeline steps
+    steps: list[tuple[str, str | None]] = []
+
+    if not skip_lint and ctx.lint_command:
+        steps.append(("LINT", ctx.lint_command))
+    if not skip_lint and ctx.format_command:
+        steps.append(("FORMAT", ctx.format_command))
+    if not skip_test and ctx.test_command:
+        steps.append(("TEST", ctx.test_command))
+
+    # Policy check
+    steps.append(("CHECK", "dockcheck check"))
+
+    # Deploy
+    deploy_provider_name = _detect_deploy_provider(target, ctx)
+    if not skip_deploy and deploy_provider_name:
+        steps.append(("DEPLOY", f"deploy:{deploy_provider_name}"))
 
     if dry_run:
         click.echo("Pipeline plan (dry run):")
-        click.echo("  1. ANALYZE — Diff analysis + blast radius")
-        click.echo("  2. TEST    — Run tests + coverage check")
-        click.echo("  3. ASSESS  — Compute confidence score")
-        click.echo("  4. DEPLOY  — Build + deploy to staging")
-        click.echo("  5. VERIFY  — Post-deploy smoke tests")
-        click.echo("  6. PROMOTE — Promote to production (if policy allows)")
-        click.echo(f"\nPolicy: {policy_file}")
-        thresholds = engine.policy.confidence_thresholds
-        click.echo(f"Auto-deploy staging threshold: {thresholds.auto_deploy_staging}")
-        click.echo(f"Auto-promote prod threshold: {thresholds.auto_promote_prod}")
+        for i, (name, cmd) in enumerate(steps, 1):
+            click.echo(f"  {i}. {name:<8} — {cmd}")
+        click.echo(f"\nProject: {target}")
+        click.echo(f"Language: {ctx.language or 'unknown'}")
+        if deploy_provider_name:
+            click.echo(f"Deploy target: {deploy_provider_name}")
+        # Show policy info if available
+        try:
+            policy_file = _find_policy_quiet(policy_path, target)
+            if policy_file:
+                engine = PolicyEngine.from_yaml(policy_file)
+                thresholds = engine.policy.confidence_thresholds
+                click.echo(f"Auto-deploy threshold: {thresholds.auto_deploy_staging}")
+        except Exception:
+            pass
         return
 
-    click.echo("Pipeline execution requires agent dispatch (Phase 3).")
-    click.echo("Run `dockcheck run --dry-run` to see the pipeline plan.")
+    # Execute pipeline
+    click.echo(f"Running pipeline in {target}...\n")
+
+    for step_name, cmd in steps:
+        if cmd and cmd.startswith("deploy:"):
+            # Deploy step — use deploy provider
+            provider_name = cmd.split(":", 1)[1]
+            click.echo(f"[{step_name}] Deploying via {provider_name}...")
+            result = _run_deploy(provider_name, str(target))
+            if not result:
+                sys.exit(1)
+            continue
+
+        if cmd == "dockcheck check":
+            # Policy check — use internal engine
+            click.echo(f"[{step_name}] Evaluating policy...")
+            try:
+                policy_file = _find_policy_quiet(policy_path, target)
+                if policy_file:
+                    engine = PolicyEngine.from_yaml(policy_file)
+                    eval_result = engine.evaluate()
+                    if eval_result.verdict == Verdict.BLOCK:
+                        click.echo(f"  BLOCKED: {'; '.join(eval_result.reasons)}")
+                        sys.exit(2)
+                    click.echo(f"  {eval_result.verdict.value.upper()}")
+                else:
+                    click.echo("  No policy found, skipping.")
+            except Exception as exc:
+                click.echo(f"  Warning: {exc}")
+            continue
+
+        # Regular command — run via subprocess
+        click.echo(f"[{step_name}] {cmd}")
+        exit_code = _run_command(cmd, str(target))
+        if exit_code != 0:
+            click.echo(f"\n  FAILED (exit code {exit_code})")
+            sys.exit(exit_code)
+        click.echo("  OK")
+
+    click.echo("\nPipeline complete.")
+
+
+@cli.command()
+@click.option(
+    "--provider", type=click.Choice(["cloudflare", "vercel"]),
+    default=None, help="Deploy provider (auto-detected if not set).",
+)
+@click.option(
+    "--dir", "target_dir", type=click.Path(), default=".",
+    help="Project directory.",
+)
+def deploy(provider: str | None, target_dir: str) -> None:
+    """Deploy the project using the detected or specified provider."""
+    from dockcheck.init.detect import RepoDetector
+
+    target = Path(target_dir).resolve()
+
+    if not provider:
+        detector = RepoDetector()
+        ctx = detector.detect(str(target))
+        provider = _detect_deploy_provider(target, ctx)
+
+    if not provider:
+        click.echo("Error: no deploy provider detected.", err=True)
+        click.echo("Use --provider to specify one, or add a wrangler.toml/vercel.json.", err=True)
+        sys.exit(1)
+
+    click.echo(f"Deploying via {provider}...")
+    result = _run_deploy(provider, str(target))
+    if not result:
+        sys.exit(1)
 
 
 @cli.command()
@@ -338,6 +454,107 @@ def validate(policy_path: str | None) -> None:
     except Exception as e:
         click.echo(f"Policy invalid: {e}", err=True)
         sys.exit(1)
+
+
+def _find_policy_quiet(
+    path: str | None, target: Path | None = None
+) -> Path | None:
+    """Like _find_policy but returns None instead of exiting."""
+    if path:
+        p = Path(path)
+        return p if p.exists() else None
+
+    bases = [target] if target else [Path(".")]
+    for base in bases:
+        candidates = [
+            base / ".dockcheck" / "policy.yaml",
+            base / "policy.yaml",
+            Path(".dockcheck/policy.yaml"),
+            Path("policy.yaml"),
+        ]
+        for c in candidates:
+            if c.exists():
+                return c
+    return None
+
+
+def _detect_deploy_provider(target: Path, ctx: object) -> str | None:
+    """Detect the deploy provider from project config."""
+    from dockcheck.init.providers import ProviderRegistry
+
+    registry = ProviderRegistry()
+    detected = registry.detect(ctx)
+    if detected:
+        return detected[0].name
+    return None
+
+
+def _run_command(cmd: str, cwd: str) -> int:
+    """Run a shell command, streaming output. Returns exit code."""
+    try:
+        result = subprocess.run(
+            cmd,
+            shell=True,
+            cwd=cwd,
+            timeout=300,
+        )
+        return result.returncode
+    except subprocess.TimeoutExpired:
+        click.echo("  Timed out after 300 seconds", err=True)
+        return 124
+    except Exception as exc:
+        click.echo(f"  Error: {exc}", err=True)
+        return 1
+
+
+def _run_deploy(provider_name: str, workdir: str) -> bool:
+    """Run deploy via provider. Returns True on success."""
+    from dockcheck.tools.deploy import DeployProviderFactory
+
+    try:
+        provider = DeployProviderFactory.get(provider_name)
+    except KeyError as exc:
+        click.echo(f"  Error: {exc}", err=True)
+        return False
+
+    if not provider.is_available():
+        click.echo(f"  Error: {provider_name} CLI not found on PATH.", err=True)
+        click.echo("  Install it first, then retry.", err=True)
+        return False
+
+    # Load env from .env if it exists
+    env = _load_env_file(workdir)
+
+    result = provider.deploy(workdir=workdir, env=env)
+
+    if result.success:
+        click.echo("  Deployed successfully!")
+        if result.url:
+            click.echo(f"  Live URL: {result.url}")
+        return True
+    else:
+        click.echo(f"  Deploy failed: {result.error or 'unknown error'}", err=True)
+        if result.stderr:
+            click.echo(f"  stderr: {result.stderr[:500]}", err=True)
+        return False
+
+
+def _load_env_file(workdir: str) -> dict[str, str]:
+    """Read key=value pairs from .env file if it exists."""
+    env_file = Path(workdir) / ".env"
+    env: dict[str, str] = {}
+    if env_file.exists():
+        try:
+            for line in env_file.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if "=" in line:
+                    key, _, value = line.partition("=")
+                    env[key.strip()] = value.strip()
+        except OSError:
+            pass
+    return env
 
 
 def _print_result(result: EvaluationResult) -> None:

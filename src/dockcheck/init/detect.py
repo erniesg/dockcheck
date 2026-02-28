@@ -25,6 +25,8 @@ class RepoContext(BaseModel):
     existing_env_keys: list[str] = Field(default_factory=list)
     test_command: str | None = None
     build_command: str | None = None
+    lint_command: str | None = None
+    format_command: str | None = None
 
 
 class RepoDetector:
@@ -50,6 +52,8 @@ class RepoDetector:
         ctx.existing_env_keys = self._read_env_keys(root)
         ctx.test_command = self._detect_test_command(root, ctx.language)
         ctx.build_command = self._detect_build_command(root, ctx.language)
+        ctx.lint_command = self._detect_lint_command(root, ctx.language)
+        ctx.format_command = self._detect_format_command(root, ctx.language)
 
         return ctx
 
@@ -219,4 +223,79 @@ class RepoDetector:
             return "go build ./..."
         elif language == "rust":
             return "cargo build --release"
+        return None
+
+    def _detect_lint_command(
+        self, root: Path, language: str | None
+    ) -> str | None:
+        if language in ("javascript", "typescript"):
+            # Check package.json scripts first
+            pkg_json = root / "package.json"
+            if pkg_json.exists():
+                try:
+                    data = json.loads(pkg_json.read_text(encoding="utf-8"))
+                    scripts = data.get("scripts", {})
+                    if "lint" in scripts:
+                        return "npm run lint"
+                except (json.JSONDecodeError, OSError):
+                    pass
+            # Check for config files
+            if (root / "biome.json").exists() or (root / "biome.jsonc").exists():
+                return "npx biome check ."
+            if (root / ".eslintrc.json").exists() or (root / ".eslintrc.js").exists():
+                return "npx eslint ."
+            if (root / "eslint.config.js").exists() or (root / "eslint.config.mjs").exists():
+                return "npx eslint ."
+        elif language == "python":
+            # Check pyproject.toml for ruff config
+            pyproject = root / "pyproject.toml"
+            if pyproject.exists():
+                try:
+                    content = pyproject.read_text(encoding="utf-8")
+                    if "[tool.ruff" in content:
+                        return "ruff check ."
+                except OSError:
+                    pass
+            if (root / "ruff.toml").exists() or (root / ".ruff.toml").exists():
+                return "ruff check ."
+            if (root / "setup.cfg").exists() or (root / ".flake8").exists():
+                return "flake8"
+        elif language == "go":
+            return "golangci-lint run"
+        elif language == "rust":
+            return "cargo clippy"
+        return None
+
+    def _detect_format_command(
+        self, root: Path, language: str | None
+    ) -> str | None:
+        if language in ("javascript", "typescript"):
+            pkg_json = root / "package.json"
+            if pkg_json.exists():
+                try:
+                    data = json.loads(pkg_json.read_text(encoding="utf-8"))
+                    scripts = data.get("scripts", {})
+                    if "format" in scripts:
+                        return "npm run format"
+                except (json.JSONDecodeError, OSError):
+                    pass
+            if (root / "biome.json").exists() or (root / "biome.jsonc").exists():
+                return "npx biome format ."
+            if (root / ".prettierrc").exists() or (root / ".prettierrc.json").exists():
+                return "npx prettier --check ."
+            if (root / "prettier.config.js").exists() or (root / "prettier.config.mjs").exists():
+                return "npx prettier --check ."
+        elif language == "python":
+            pyproject = root / "pyproject.toml"
+            if pyproject.exists():
+                try:
+                    content = pyproject.read_text(encoding="utf-8")
+                    if "[tool.ruff" in content:
+                        return "ruff format --check ."
+                except OSError:
+                    pass
+            if (root / "ruff.toml").exists() or (root / ".ruff.toml").exists():
+                return "ruff format --check ."
+        elif language == "rust":
+            return "cargo fmt --check"
         return None
