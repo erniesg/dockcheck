@@ -1,0 +1,3 @@
+steps:
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    args: ['gcloud', 'run', 'deploy', 'dockcheck-hello', '--source', '.', '--region', 'asia-southeast1']

@@ -104,6 +104,88 @@ class TestWorkflowGeneration:
         assert "dockcheck check" in output
 
 
+class TestDeployStepGeneration:
+    """Tests for provider-specific deploy step generation."""
+
+    def test_fly_deploy_step(self):
+        config = WorkflowConfig(
+            deploy_provider="fly",
+            deploy_secrets={"FLY_API_TOKEN": "FLY_API_TOKEN"},
+        )
+        output = generate_workflow(config)
+        assert "Deploy to Fly.io" in output
+        assert "superfly/flyctl-actions/setup-flyctl@master" in output
+        assert "fly deploy" in output
+
+    def test_netlify_deploy_step(self):
+        config = WorkflowConfig(
+            deploy_provider="netlify",
+            deploy_secrets={"netlify-auth-token": "NETLIFY_AUTH_TOKEN"},
+        )
+        output = generate_workflow(config)
+        assert "Deploy to Netlify" in output
+        assert "nwtgck/actions-netlify@v3" in output
+
+    def test_docker_registry_deploy_step(self):
+        config = WorkflowConfig(
+            deploy_provider="docker-registry",
+            deploy_secrets={"username": "DOCKER_USERNAME", "password": "DOCKER_PASSWORD"},
+        )
+        output = generate_workflow(config)
+        assert "Docker" in output
+        assert "docker/build-push-action@v5" in output
+
+    def test_aws_lambda_deploy_step(self):
+        config = WorkflowConfig(
+            deploy_provider="aws-lambda",
+            deploy_secrets={
+                "aws-access-key-id": "AWS_ACCESS_KEY_ID",
+                "aws-secret-access-key": "AWS_SECRET_ACCESS_KEY",
+                "aws-region": "AWS_REGION",
+            },
+        )
+        output = generate_workflow(config)
+        assert "AWS" in output
+        assert "aws-actions/configure-aws-credentials@v4" in output
+        assert "sam deploy" in output
+
+    def test_gcp_cloudrun_deploy_step(self):
+        config = WorkflowConfig(
+            deploy_provider="gcp-cloudrun",
+            deploy_secrets={"credentials_json": "GCP_SERVICE_ACCOUNT_KEY"},
+        )
+        output = generate_workflow(config)
+        assert "Cloud Run" in output
+        assert "google-github-actions/auth@v2" in output
+        assert "gcloud run deploy" in output
+
+    def test_railway_deploy_step(self):
+        config = WorkflowConfig(deploy_provider="railway")
+        output = generate_workflow(config)
+        assert "Railway" in output
+        assert "railway up" in output
+
+    def test_render_deploy_step(self):
+        config = WorkflowConfig(deploy_provider="render")
+        output = generate_workflow(config)
+        assert "Render" in output
+        assert "RENDER_DEPLOY_HOOK_URL" in output
+
+    def test_no_deploy_step_when_no_provider(self):
+        config = WorkflowConfig(deploy_provider=None)
+        output = generate_workflow(config)
+        assert "Deploy to" not in output
+
+    def test_cloudflare_deploy_step_still_works(self):
+        config = WorkflowConfig(
+            deploy_provider="cloudflare",
+            deploy_secrets={"apiToken": "CLOUDFLARE_API_TOKEN", "accountId": "CLOUDFLARE_ACCOUNT_ID"},
+        )
+        output = generate_workflow(config)
+        assert "Deploy to Cloudflare" in output
+        assert "cloudflare/wrangler-action@v3" in output
+
+
 class TestHookGeneration:
     def test_pre_commit_script_is_shell(self):
         script = generate_pre_commit_script()

@@ -254,6 +254,57 @@ class TestSecretSafety:
         assert call_args.kwargs["input"] == "my-secret-token"
 
 
+class TestOptionalSecrets:
+    def test_optional_secrets_dont_block_all_ready(self, tmp_path: Path, monkeypatch):
+        """Optional secrets missing should not block all_ready."""
+        monkeypatch.setenv("NETLIFY_AUTH_TOKEN", "tok")
+        monkeypatch.delenv("NETLIFY_SITE_ID", raising=False)
+
+        auth = AuthBootstrapper(env_file=str(tmp_path / ".env"))
+        registry = ProviderRegistry()
+        netlify = registry.get("netlify")
+
+        with patch.object(auth, "_list_github_secrets", return_value=set()):
+            status = auth.check(netlify)
+
+        assert status.all_ready is True
+        # NETLIFY_SITE_ID is optional (required=False)
+        site_id = next(s for s in status.secrets if s.name == "NETLIFY_SITE_ID")
+        assert site_id.required is False
+        assert site_id.available_local is False
+
+    def test_required_secret_missing_blocks_all_ready(self, tmp_path: Path, monkeypatch):
+        """Required secret missing should block all_ready even if optional ones are set."""
+        monkeypatch.delenv("NETLIFY_AUTH_TOKEN", raising=False)
+        monkeypatch.setenv("NETLIFY_SITE_ID", "site-id")
+
+        auth = AuthBootstrapper(env_file=str(tmp_path / ".env"))
+        registry = ProviderRegistry()
+        netlify = registry.get("netlify")
+
+        with patch.object(auth, "_list_github_secrets", return_value=set()):
+            status = auth.check(netlify)
+
+        assert status.all_ready is False
+
+    def test_secret_status_carries_required_flag(self, tmp_path: Path, monkeypatch):
+        """SecretStatus.required should reflect the spec's required field."""
+        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "key")
+        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "secret")
+        monkeypatch.delenv("AWS_REGION", raising=False)
+
+        auth = AuthBootstrapper(env_file=str(tmp_path / ".env"))
+        registry = ProviderRegistry()
+        aws = registry.get("aws-lambda")
+
+        with patch.object(auth, "_list_github_secrets", return_value=set()):
+            status = auth.check(aws)
+
+        assert status.all_ready is True
+        region = next(s for s in status.secrets if s.name == "AWS_REGION")
+        assert region.required is False
+
+
 class TestAuthStatusModel:
     def test_auth_status_defaults(self):
         status = AuthStatus(provider="test")
@@ -265,3 +316,4 @@ class TestAuthStatusModel:
         assert s.available_local is False
         assert s.available_github is False
         assert s.setup_url == ""
+        assert s.required is True

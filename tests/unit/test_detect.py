@@ -165,6 +165,10 @@ class TestDetectConfigFiles:
         assert ctx.has_fly_config is False
         assert ctx.has_netlify_config is False
         assert ctx.has_github_workflows is False
+        assert ctx.has_sam_config is False
+        assert ctx.has_cloudrun_config is False
+        assert ctx.has_railway_config is False
+        assert ctx.has_render_config is False
 
 
 class TestDetectGitRemote:
@@ -275,6 +279,70 @@ class TestDetectCommands:
     def test_no_build_command(self, tmp_path: Path):
         ctx = RepoDetector().detect(str(tmp_path))
         assert ctx.build_command is None
+
+
+class TestDetectNewProviderConfigs:
+    """Tests for AWS SAM, Cloud Run, Railway, and Render config detection."""
+
+    # --- AWS SAM ---
+    def test_sam_config_template_yaml(self, tmp_path: Path):
+        (tmp_path / "template.yaml").write_text("AWSTemplateFormatVersion: '2010-09-09'")
+        ctx = RepoDetector().detect(str(tmp_path))
+        assert ctx.has_sam_config is True
+
+    def test_sam_config_template_yml(self, tmp_path: Path):
+        (tmp_path / "template.yml").write_text("AWSTemplateFormatVersion: '2010-09-09'")
+        ctx = RepoDetector().detect(str(tmp_path))
+        assert ctx.has_sam_config is True
+
+    def test_sam_config_samconfig_toml(self, tmp_path: Path):
+        (tmp_path / "samconfig.toml").write_text("[default.deploy]")
+        ctx = RepoDetector().detect(str(tmp_path))
+        assert ctx.has_sam_config is True
+
+    def test_no_sam_config(self, tmp_path: Path):
+        ctx = RepoDetector().detect(str(tmp_path))
+        assert ctx.has_sam_config is False
+
+    # --- GCP Cloud Run ---
+    def test_cloudrun_config_cloudbuild(self, tmp_path: Path):
+        (tmp_path / "cloudbuild.yaml").write_text("steps:\n- name: gcr.io/cloud-builders/docker")
+        ctx = RepoDetector().detect(str(tmp_path))
+        assert ctx.has_cloudrun_config is True
+
+    def test_cloudrun_config_app_yaml(self, tmp_path: Path):
+        (tmp_path / "app.yaml").write_text("runtime: python39")
+        ctx = RepoDetector().detect(str(tmp_path))
+        assert ctx.has_cloudrun_config is True
+
+    def test_no_cloudrun_config(self, tmp_path: Path):
+        ctx = RepoDetector().detect(str(tmp_path))
+        assert ctx.has_cloudrun_config is False
+
+    # --- Railway ---
+    def test_railway_config_json(self, tmp_path: Path):
+        (tmp_path / "railway.json").write_text('{"build": {}}')
+        ctx = RepoDetector().detect(str(tmp_path))
+        assert ctx.has_railway_config is True
+
+    def test_railway_config_toml(self, tmp_path: Path):
+        (tmp_path / "railway.toml").write_text("[build]")
+        ctx = RepoDetector().detect(str(tmp_path))
+        assert ctx.has_railway_config is True
+
+    def test_no_railway_config(self, tmp_path: Path):
+        ctx = RepoDetector().detect(str(tmp_path))
+        assert ctx.has_railway_config is False
+
+    # --- Render ---
+    def test_render_config(self, tmp_path: Path):
+        (tmp_path / "render.yaml").write_text("services:\n- type: web")
+        ctx = RepoDetector().detect(str(tmp_path))
+        assert ctx.has_render_config is True
+
+    def test_no_render_config(self, tmp_path: Path):
+        ctx = RepoDetector().detect(str(tmp_path))
+        assert ctx.has_render_config is False
 
 
 class TestCFWorkerExample:

@@ -29,6 +29,7 @@ class PreflightResult(BaseModel):
     needs_auth: bool = False
     missing_secrets: list[str] = Field(default_factory=list)
     missing_cli: str | None = None
+    install_hint: str = ""
 
     @property
     def blocking(self) -> list[PreflightItem]:
@@ -77,8 +78,10 @@ class PreflightChecker:
             ),
             required=True,
             fix_hint=(
-                "Add a wrangler.toml (Cloudflare), vercel.json (Vercel), "
-                "fly.toml (Fly.io), or Dockerfile"
+                "Add a config file: wrangler.toml (Cloudflare), vercel.json (Vercel), "
+                "fly.toml (Fly.io), netlify.toml (Netlify), Dockerfile (Docker), "
+                "template.yaml (AWS SAM), cloudbuild.yaml (Cloud Run), "
+                "railway.json (Railway), render.yaml (Render)"
             ),
         ))
 
@@ -89,18 +92,34 @@ class PreflightChecker:
                 provider_name=None,
             )
 
-        # 3. Check CLI tool is installed
-        cli_available = shutil.which(provider.cli_tool) is not None
+        # 3. Check CLI tool is installed (delegate to DeployProvider when available)
+        from dockcheck.tools.deploy import DeployProviderFactory
+
+        try:
+            dp = DeployProviderFactory.get(provider.name)
+            cli_available = dp.is_available()
+        except KeyError:
+            cli_available = shutil.which(provider.cli_tool) is not None
+
+        if provider.name == "render":
+            cli_message = (
+                "RENDER_DEPLOY_HOOK_URL set" if cli_available
+                else "RENDER_DEPLOY_HOOK_URL not set"
+            )
+        else:
+            cli_message = (
+                f"{provider.cli_tool} found on PATH" if cli_available
+                else f"{provider.cli_tool} not found on PATH"
+            )
+
+        cli_fix_hint = provider.install_hint or f"Install {provider.cli_tool}"
 
         items.append(PreflightItem(
             name="cli_tool",
             passed=cli_available,
-            message=(
-                f"{provider.cli_tool} found on PATH" if cli_available
-                else f"{provider.cli_tool} not found on PATH"
-            ),
+            message=cli_message,
             required=True,
-            fix_hint=f"Install {provider.cli_tool}: npm install -g {provider.cli_tool}",
+            fix_hint=cli_fix_hint,
         ))
 
         # 4. Check .dockcheck/ exists
@@ -120,20 +139,37 @@ class PreflightChecker:
         # 5. Check auth / secrets
         auth = AuthBootstrapper(env_file=str(target / ".env"))
         auth_status = auth.check(provider)
-        missing = [s.name for s in auth_status.secrets if not s.available_local]
+        missing_required = [
+            s.name for s in auth_status.secrets
+            if not s.available_local and s.required
+        ]
+        missing_optional = [
+            s.name for s in auth_status.secrets
+            if not s.available_local and not s.required
+        ]
+        missing = missing_required + missing_optional
+
+        auth_message_parts: list[str] = []
+        if auth_status.all_ready and not missing_optional:
+            auth_message_parts.append("All secrets available")
+        elif auth_status.all_ready and missing_optional:
+            auth_message_parts.append(
+                f"Required secrets available. Optional: {', '.join(missing_optional)}"
+            )
+        else:
+            auth_message_parts.append(f"Missing: {', '.join(missing_required)}")
+            if missing_optional:
+                auth_message_parts.append(f"Optional: {', '.join(missing_optional)}")
 
         items.append(PreflightItem(
             name="auth",
             passed=auth_status.all_ready,
-            message=(
-                "All secrets available" if auth_status.all_ready
-                else f"Missing: {', '.join(missing)}"
-            ),
+            message=". ".join(auth_message_parts),
             required=True,
             fix_hint="\n".join(
                 f"  {s.name} — get at: {s.setup_url}"
                 for s in auth_status.secrets
-                if not s.available_local
+                if not s.available_local and s.required
             ),
         ))
 
@@ -174,6 +210,7 @@ class PreflightChecker:
             provider_name=provider_name,
             needs_init=needs_init,
             needs_auth=not auth_status.all_ready,
-            missing_secrets=missing,
+            missing_secrets=missing_required,
             missing_cli=provider.cli_tool if not cli_available else None,
+            install_hint=cli_fix_hint if not cli_available else "",
         )

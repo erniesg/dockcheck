@@ -51,7 +51,7 @@ def cli() -> None:
 )
 @click.option(
     "--provider",
-    type=click.Choice(["cloudflare", "vercel", "fly", "netlify", "docker-registry"]),
+    type=click.Choice(["cloudflare", "vercel", "fly", "netlify", "docker-registry", "aws-lambda", "gcp-cloudrun", "railway", "render"]),
     default=None,
     help="Deploy provider (skips detection).",
 )
@@ -149,6 +149,14 @@ def _init_smart(
         parts.append("Config: fly.toml")
     elif ctx.has_netlify_config:
         parts.append("Config: netlify.toml")
+    elif ctx.has_sam_config:
+        parts.append("Config: template.yaml")
+    elif ctx.has_cloudrun_config:
+        parts.append("Config: cloudbuild.yaml")
+    elif ctx.has_railway_config:
+        parts.append("Config: railway.json")
+    elif ctx.has_render_config:
+        parts.append("Config: render.yaml")
     if ctx.git_remote:
         parts.append(f"Remote: {ctx.git_remote}")
     click.echo(f"  {' | '.join(parts)}")
@@ -378,7 +386,7 @@ def run(
 
 @cli.command()
 @click.option(
-    "--provider", type=click.Choice(["cloudflare", "vercel"]),
+    "--provider", type=click.Choice(["cloudflare", "vercel", "fly", "netlify", "docker-registry", "aws-lambda", "gcp-cloudrun", "railway", "render"]),
     default=None, help="Deploy provider (auto-detected if not set).",
 )
 @click.option(
@@ -416,7 +424,7 @@ def deploy(provider: str | None, target_dir: str) -> None:
 
 @cli.command()
 @click.option(
-    "--provider", type=click.Choice(["cloudflare", "vercel"]),
+    "--provider", type=click.Choice(["cloudflare", "vercel", "fly", "netlify", "docker-registry", "aws-lambda", "gcp-cloudrun", "railway", "render"]),
     default=None, help="Deploy provider (auto-detected if not set).",
 )
 @click.option(
@@ -475,16 +483,20 @@ def ship(
         click.echo(
             f"Error: {preflight.missing_cli} CLI not found on PATH.", err=True
         )
-        click.echo(
-            f"Install it first: npm install -g {preflight.missing_cli}",
-            err=True,
-        )
+        if preflight.install_hint:
+            click.echo(
+                f"Install it first: {preflight.install_hint}",
+                err=True,
+            )
         sys.exit(1)
 
     if not preflight.provider_name:
         click.echo("Error: no deploy target detected.", err=True)
         click.echo(
-            "Add a wrangler.toml, vercel.json, or use --provider.", err=True
+            "Add a config file (wrangler.toml, vercel.json, fly.toml, netlify.toml, "
+            "Dockerfile, template.yaml, cloudbuild.yaml, railway.json, render.yaml) "
+            "or use --provider.",
+            err=True,
         )
         sys.exit(1)
 

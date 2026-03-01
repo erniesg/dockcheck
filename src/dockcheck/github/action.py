@@ -243,7 +243,86 @@ def _build_deploy_step(cfg: WorkflowConfig) -> str | None:
             "          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}"
         )
 
-    # Generic provider — just run dockcheck run
+    if cfg.deploy_provider == "fly":
+        return (
+            "      - name: Setup Fly.io CLI\n"
+            "        uses: superfly/flyctl-actions/setup-flyctl@master\n\n"
+            "      - name: Deploy to Fly.io\n"
+            "        run: fly deploy\n"
+            "        env:\n"
+            "          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}"
+        )
+
+    if cfg.deploy_provider == "netlify":
+        with_block = "\n".join(
+            f"          {k}: ${{{{ secrets.{v} }}}}"
+            for k, v in cfg.deploy_secrets.items()
+        )
+        return (
+            "      - name: Deploy to Netlify\n"
+            "        uses: nwtgck/actions-netlify@v3\n"
+            "        with:\n"
+            "          publish-dir: './build'\n"
+            "          production-deploy: true\n"
+            f"{with_block}"
+        )
+
+    if cfg.deploy_provider == "docker-registry":
+        return (
+            "      - name: Build and push Docker image\n"
+            "        uses: docker/build-push-action@v5\n"
+            "        with:\n"
+            "          push: true\n"
+            "          tags: ${{ secrets.DOCKER_USERNAME }}/${{ github.event.repository.name }}:latest"
+        )
+
+    if cfg.deploy_provider == "aws-lambda":
+        with_block = "\n".join(
+            f"          {k}: ${{{{ secrets.{v} }}}}"
+            for k, v in cfg.deploy_secrets.items()
+        )
+        return (
+            "      - name: Configure AWS credentials\n"
+            "        uses: aws-actions/configure-aws-credentials@v4\n"
+            "        with:\n"
+            f"{with_block}\n\n"
+            "      - name: Deploy to AWS Lambda (SAM)\n"
+            "        run: sam deploy --no-confirm-changeset"
+        )
+
+    if cfg.deploy_provider == "gcp-cloudrun":
+        with_block = "\n".join(
+            f"          {k}: ${{{{ secrets.{v} }}}}"
+            for k, v in cfg.deploy_secrets.items()
+        )
+        return (
+            "      - name: Authenticate to Google Cloud\n"
+            "        uses: google-github-actions/auth@v2\n"
+            "        with:\n"
+            f"{with_block}\n\n"
+            "      - name: Deploy to Cloud Run\n"
+            "        run: gcloud run deploy --source ."
+        )
+
+    if cfg.deploy_provider == "railway":
+        return (
+            "      - name: Deploy to Railway\n"
+            "        run: |\n"
+            "          npm install -g @railway/cli\n"
+            "          railway up\n"
+            "        env:\n"
+            "          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}"
+        )
+
+    if cfg.deploy_provider == "render":
+        return (
+            "      - name: Deploy to Render\n"
+            "        run: curl -X POST ${{ secrets.RENDER_DEPLOY_HOOK_URL }}\n"
+            "        env:\n"
+            "          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}"
+        )
+
+    # Unknown provider — skip deploy step
     return None
 
 

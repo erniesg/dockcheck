@@ -1,0 +1,5 @@
+services:
+  - type: web
+    name: dockcheck-hello
+    runtime: node
+    startCommand: node src/index.js

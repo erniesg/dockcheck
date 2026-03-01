@@ -19,6 +19,10 @@ class RepoContext(BaseModel):
     has_vercel_config: bool = False
     has_fly_config: bool = False
     has_netlify_config: bool = False
+    has_sam_config: bool = False
+    has_cloudrun_config: bool = False
+    has_railway_config: bool = False
+    has_render_config: bool = False
     git_remote: str | None = None
     has_github_workflows: bool = False
     gitignore_covers_env: bool = False
@@ -46,6 +50,20 @@ class RepoDetector:
         ctx.has_vercel_config = (root / "vercel.json").exists()
         ctx.has_fly_config = (root / "fly.toml").exists()
         ctx.has_netlify_config = (root / "netlify.toml").exists()
+        ctx.has_sam_config = (
+            (root / "template.yaml").exists()
+            or (root / "template.yml").exists()
+            or (root / "samconfig.toml").exists()
+        )
+        ctx.has_cloudrun_config = (
+            (root / "cloudbuild.yaml").exists()
+            or (root / "app.yaml").exists()
+        )
+        ctx.has_railway_config = (
+            (root / "railway.json").exists()
+            or (root / "railway.toml").exists()
+        )
+        ctx.has_render_config = (root / "render.yaml").exists()
         ctx.git_remote = self._detect_git_remote(root)
         ctx.has_github_workflows = (root / ".github" / "workflows").is_dir()
         ctx.gitignore_covers_env = self._check_gitignore(root)

@@ -20,6 +20,7 @@ class SecretStatus(BaseModel):
     available_local: bool = False
     available_github: bool = False
     setup_url: str = ""
+    required: bool = True
 
 
 class AuthStatus(BaseModel):
@@ -51,10 +52,11 @@ class AuthBootstrapper:
                     available_local=local,
                     available_github=github,
                     setup_url=spec.setup_url,
+                    required=spec.required,
                 )
             )
 
-        all_ready = all(s.available_local for s in statuses)
+        all_ready = all(s.available_local for s in statuses if s.required)
 
         return AuthStatus(
             provider=provider.name,

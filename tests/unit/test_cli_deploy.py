@@ -143,6 +143,140 @@ class TestDeployCommand:
                 result = runner.invoke(cli, ["deploy"])
         assert "ship" in result.output.lower()
 
+    def test_deploy_fly_provider(self, runner):
+        """Can deploy with --provider fly."""
+        with runner.isolated_filesystem():
+            Path("fly.toml").write_text('app = "test"')
+            Path("package.json").write_text('{"name": "test"}')
+            mock_deploy = MagicMock()
+            mock_deploy.success = True
+            mock_deploy.url = "https://test.fly.dev"
+
+            with (
+                patch("subprocess.run", return_value=_MOCK_SUBPROCESS_EMPTY),
+                patch("shutil.which", return_value="/usr/local/bin/fly"),
+                patch(
+                    "dockcheck.tools.deploy.FlyProvider.deploy",
+                    return_value=mock_deploy,
+                ),
+            ):
+                result = runner.invoke(cli, ["deploy", "--provider", "fly"])
+            assert result.exit_code == 0
+            assert "Deployed successfully" in result.output
+
+    def test_deploy_netlify_provider(self, runner):
+        """Can deploy with --provider netlify."""
+        with runner.isolated_filesystem():
+            Path("netlify.toml").write_text('[build]\ncommand = "npm build"')
+            mock_deploy = MagicMock()
+            mock_deploy.success = True
+            mock_deploy.url = "https://test.netlify.app"
+
+            with (
+                patch("subprocess.run", return_value=_MOCK_SUBPROCESS_EMPTY),
+                patch("shutil.which", return_value="/usr/local/bin/netlify"),
+                patch(
+                    "dockcheck.tools.deploy.NetlifyProvider.deploy",
+                    return_value=mock_deploy,
+                ),
+            ):
+                result = runner.invoke(cli, ["deploy", "--provider", "netlify"])
+            assert result.exit_code == 0
+
+    def test_deploy_aws_lambda_provider(self, runner):
+        """Can deploy with --provider aws-lambda."""
+        with runner.isolated_filesystem():
+            Path("template.yaml").write_text("AWSTemplateFormatVersion: '2010-09-09'")
+            mock_deploy = MagicMock()
+            mock_deploy.success = True
+            mock_deploy.url = "https://abc.execute-api.us-east-1.amazonaws.com"
+
+            with (
+                patch("subprocess.run", return_value=_MOCK_SUBPROCESS_EMPTY),
+                patch("shutil.which", return_value="/usr/local/bin/sam"),
+                patch(
+                    "dockcheck.tools.deploy.AwsLambdaProvider.deploy",
+                    return_value=mock_deploy,
+                ),
+            ):
+                result = runner.invoke(cli, ["deploy", "--provider", "aws-lambda"])
+            assert result.exit_code == 0
+
+    def test_deploy_gcp_cloudrun_provider(self, runner):
+        """Can deploy with --provider gcp-cloudrun."""
+        with runner.isolated_filesystem():
+            mock_deploy = MagicMock()
+            mock_deploy.success = True
+            mock_deploy.url = "https://svc.run.app"
+
+            with (
+                patch("subprocess.run", return_value=_MOCK_SUBPROCESS_EMPTY),
+                patch("shutil.which", return_value="/usr/local/bin/gcloud"),
+                patch(
+                    "dockcheck.tools.deploy.GcpCloudRunProvider.deploy",
+                    return_value=mock_deploy,
+                ),
+            ):
+                result = runner.invoke(cli, ["deploy", "--provider", "gcp-cloudrun"])
+            assert result.exit_code == 0
+
+    def test_deploy_railway_provider(self, runner):
+        """Can deploy with --provider railway."""
+        with runner.isolated_filesystem():
+            mock_deploy = MagicMock()
+            mock_deploy.success = True
+            mock_deploy.url = "https://test.up.railway.app"
+
+            with (
+                patch("subprocess.run", return_value=_MOCK_SUBPROCESS_EMPTY),
+                patch("shutil.which", return_value="/usr/local/bin/railway"),
+                patch(
+                    "dockcheck.tools.deploy.RailwayProvider.deploy",
+                    return_value=mock_deploy,
+                ),
+            ):
+                result = runner.invoke(cli, ["deploy", "--provider", "railway"])
+            assert result.exit_code == 0
+
+    def test_deploy_render_provider(self, runner):
+        """Can deploy with --provider render."""
+        with runner.isolated_filesystem():
+            mock_deploy = MagicMock()
+            mock_deploy.success = True
+            mock_deploy.url = None
+
+            with (
+                patch("subprocess.run", return_value=_MOCK_SUBPROCESS_EMPTY),
+                patch("os.environ.get", side_effect=lambda k, d=None: {
+                    "RENDER_DEPLOY_HOOK_URL": "https://api.render.com/deploy/srv-xxx",
+                }.get(k, d)),
+                patch(
+                    "dockcheck.tools.deploy.RenderProvider.deploy",
+                    return_value=mock_deploy,
+                ),
+            ):
+                result = runner.invoke(cli, ["deploy", "--provider", "render"])
+            assert result.exit_code == 0
+
+    def test_deploy_docker_registry_provider(self, runner):
+        """Can deploy with --provider docker-registry."""
+        with runner.isolated_filesystem():
+            Path("Dockerfile").write_text("FROM python:3.10")
+            mock_deploy = MagicMock()
+            mock_deploy.success = True
+            mock_deploy.url = None
+
+            with (
+                patch("subprocess.run", return_value=_MOCK_SUBPROCESS_EMPTY),
+                patch("shutil.which", return_value="/usr/local/bin/docker"),
+                patch(
+                    "dockcheck.tools.deploy.DockerRegistryProvider.deploy",
+                    return_value=mock_deploy,
+                ),
+            ):
+                result = runner.invoke(cli, ["deploy", "--provider", "docker-registry"])
+            assert result.exit_code == 0
+
 
 # ---------------------------------------------------------------------------
 # ship — the magic "do everything" command
@@ -235,7 +369,36 @@ class TestShipCommand:
                 )
         assert result.exit_code != 0
         assert "not found" in result.output.lower()
-        assert "install" in result.output.lower()
+        assert "npm install -g wrangler" in result.output
+
+    def test_ship_missing_cli_fly_hint(self, runner):
+        """Fly not installed → shows curl install hint, not npm."""
+        with runner.isolated_filesystem():
+            Path("fly.toml").write_text('app = "test"')
+            Path("package.json").write_text('{"name": "test"}')
+            with (
+                patch("subprocess.run", return_value=_MOCK_SUBPROCESS_EMPTY),
+                patch("shutil.which", return_value=None),
+            ):
+                result = runner.invoke(
+                    cli, ["ship", "--non-interactive"]
+                )
+        assert result.exit_code != 0
+        assert "curl -L https://fly.io/install.sh" in result.output
+
+    def test_ship_missing_cli_sam_hint(self, runner):
+        """SAM not installed → shows pip install hint."""
+        with runner.isolated_filesystem():
+            Path("template.yaml").write_text("AWSTemplateFormatVersion: '2010-09-09'")
+            with (
+                patch("subprocess.run", return_value=_MOCK_SUBPROCESS_EMPTY),
+                patch("shutil.which", return_value=None),
+            ):
+                result = runner.invoke(
+                    cli, ["ship", "--non-interactive"]
+                )
+        assert result.exit_code != 0
+        assert "pip install aws-sam-cli" in result.output
 
     def test_ship_full_success(self, runner):
         """Happy path: preflight → init → pipeline → deploy."""

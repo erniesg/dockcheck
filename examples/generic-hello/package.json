@@ -1,0 +1,10 @@
+{
+  "name": "generic-hello",
+  "version": "1.0.0",
+  "description": "Provider-agnostic Node.js HTTP server for dockcheck examples",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node -e \"fetch('http://localhost:3000').then(r => r.text()).then(t => { if (!t.includes('Hello')) process.exit(1) })\""
+  }
+}
