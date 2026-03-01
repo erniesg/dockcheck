@@ -281,13 +281,10 @@ class TestDockerRegistryProvider:
         mock_result = subprocess.CompletedProcess(
             args=[], returncode=0, stdout="Successfully pushed", stderr="",
         )
-        with (
-            patch("subprocess.run", return_value=mock_result),
-            patch("os.environ.get", side_effect=lambda k, d=None: {
-                "DOCKER_IMAGE": "myuser/myapp:latest",
-            }.get(k, d)),
-        ):
-            result = DockerRegistryProvider().deploy()
+        with patch("subprocess.run", return_value=mock_result):
+            result = DockerRegistryProvider().deploy(
+                env={"DOCKER_IMAGE": "myuser/myapp:latest"},
+            )
         assert result.success is True
         assert result.url is None  # Docker push doesn't produce a URL
 
@@ -295,23 +292,17 @@ class TestDockerRegistryProvider:
         mock_result = subprocess.CompletedProcess(
             args=[], returncode=1, stdout="", stderr="build error",
         )
-        with (
-            patch("subprocess.run", return_value=mock_result),
-            patch("os.environ.get", side_effect=lambda k, d=None: {
-                "DOCKER_IMAGE": "myuser/myapp:latest",
-            }.get(k, d)),
-        ):
-            result = DockerRegistryProvider().deploy()
+        with patch("subprocess.run", return_value=mock_result):
+            result = DockerRegistryProvider().deploy(
+                env={"DOCKER_IMAGE": "myuser/myapp:latest"},
+            )
         assert result.success is False
 
     def test_deploy_cli_not_found(self):
-        with (
-            patch("subprocess.run", side_effect=FileNotFoundError),
-            patch("os.environ.get", side_effect=lambda k, d=None: {
-                "DOCKER_IMAGE": "myuser/myapp:latest",
-            }.get(k, d)),
-        ):
-            result = DockerRegistryProvider().deploy()
+        with patch("subprocess.run", side_effect=FileNotFoundError):
+            result = DockerRegistryProvider().deploy(
+                env={"DOCKER_IMAGE": "myuser/myapp:latest"},
+            )
         assert result.success is False
         assert "not found" in result.error
 
@@ -320,25 +311,20 @@ class TestDockerRegistryProvider:
         mock_result = subprocess.CompletedProcess(
             args=[], returncode=0, stdout="ok", stderr="",
         )
-        with (
-            patch("subprocess.run", return_value=mock_result) as mock_run,
-            patch("os.environ.get", side_effect=lambda k, d=None: {
-                "DOCKER_USERNAME": "testuser",
-            }.get(k, d)),
-        ):
-            result = DockerRegistryProvider().deploy(workdir="/tmp/myapp")
+        with patch("subprocess.run", return_value=mock_result) as mock_run:
+            result = DockerRegistryProvider().deploy(
+                workdir="/tmp/myapp",
+                env={"DOCKER_USERNAME": "testuser"},
+            )
         assert result.success is True
         # Build and push should both be called
         assert mock_run.call_count == 2
 
     def test_deploy_timeout(self):
-        with (
-            patch("subprocess.run", side_effect=subprocess.TimeoutExpired("docker", 300)),
-            patch("os.environ.get", side_effect=lambda k, d=None: {
-                "DOCKER_IMAGE": "myuser/myapp:latest",
-            }.get(k, d)),
-        ):
-            result = DockerRegistryProvider().deploy()
+        with patch("subprocess.run", side_effect=subprocess.TimeoutExpired("docker", 300)):
+            result = DockerRegistryProvider().deploy(
+                env={"DOCKER_IMAGE": "myuser/myapp:latest"},
+            )
         assert result.success is False
         assert "timed out" in result.error
 
@@ -356,21 +342,36 @@ class TestAwsLambdaProvider:
             assert AwsLambdaProvider().is_available() is False
 
     def test_deploy_success(self):
-        mock_result = subprocess.CompletedProcess(
+        build_ok = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="Build Succeeded", stderr="",
+        )
+        deploy_ok = subprocess.CompletedProcess(
             args=[], returncode=0,
             stdout="Outputs:\nApiUrl: https://abc123.execute-api.us-east-1.amazonaws.com/Prod\n",
             stderr="",
         )
-        with patch("subprocess.run", return_value=mock_result):
+        with patch("subprocess.run", side_effect=[build_ok, deploy_ok]):
             result = AwsLambdaProvider().deploy()
         assert result.success is True
         assert "execute-api" in result.url
 
+    def test_deploy_build_failure(self):
+        build_fail = subprocess.CompletedProcess(
+            args=[], returncode=1, stdout="", stderr="Error: build failed",
+        )
+        with patch("subprocess.run", return_value=build_fail):
+            result = AwsLambdaProvider().deploy()
+        assert result.success is False
+        assert "build failed" in result.error
+
     def test_deploy_failure(self):
-        mock_result = subprocess.CompletedProcess(
+        build_ok = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="Build Succeeded", stderr="",
+        )
+        deploy_fail = subprocess.CompletedProcess(
             args=[], returncode=1, stdout="", stderr="Error: no credentials",
         )
-        with patch("subprocess.run", return_value=mock_result):
+        with patch("subprocess.run", side_effect=[build_ok, deploy_fail]):
             result = AwsLambdaProvider().deploy()
         assert result.success is False
 
@@ -381,7 +382,7 @@ class TestAwsLambdaProvider:
         assert "not found" in result.error
 
     def test_deploy_timeout(self):
-        with patch("subprocess.run", side_effect=subprocess.TimeoutExpired("sam", 600)):
+        with patch("subprocess.run", side_effect=subprocess.TimeoutExpired("sam", 300)):
             result = AwsLambdaProvider().deploy()
         assert result.success is False
         assert "timed out" in result.error
@@ -411,7 +412,9 @@ class TestGcpCloudRunProvider:
             stderr="",
         )
         with patch("subprocess.run", return_value=mock_result):
-            result = GcpCloudRunProvider().deploy()
+            result = GcpCloudRunProvider().deploy(
+                env={"GCP_PROJECT_ID": "my-project"},
+            )
         assert result.success is True
         assert "run.app" in result.url
 
@@ -517,18 +520,14 @@ class TestRenderProvider:
         import httpx
 
         mock_response = httpx.Response(200, json={"ok": True})
-        with (
-            patch("os.environ.get", side_effect=lambda k, d=None: {
-                "RENDER_DEPLOY_HOOK_URL": "https://api.render.com/deploy/srv-xxx",
-            }.get(k, d)),
-            patch("httpx.post", return_value=mock_response),
-        ):
-            result = RenderProvider().deploy()
+        with patch("httpx.post", return_value=mock_response):
+            result = RenderProvider().deploy(
+                env={"RENDER_DEPLOY_HOOK_URL": "https://api.render.com/deploy/srv-xxx"},
+            )
         assert result.success is True
 
     def test_deploy_no_hook_url(self):
-        with patch("os.environ.get", return_value=None):
-            result = RenderProvider().deploy()
+        result = RenderProvider().deploy()
         assert result.success is False
         assert "RENDER_DEPLOY_HOOK_URL" in result.error
 
@@ -536,26 +535,20 @@ class TestRenderProvider:
         import httpx
 
         mock_response = httpx.Response(500, text="Internal Server Error")
-        with (
-            patch("os.environ.get", side_effect=lambda k, d=None: {
-                "RENDER_DEPLOY_HOOK_URL": "https://api.render.com/deploy/srv-xxx",
-            }.get(k, d)),
-            patch("httpx.post", return_value=mock_response),
-        ):
-            result = RenderProvider().deploy()
+        with patch("httpx.post", return_value=mock_response):
+            result = RenderProvider().deploy(
+                env={"RENDER_DEPLOY_HOOK_URL": "https://api.render.com/deploy/srv-xxx"},
+            )
         assert result.success is False
         assert "500" in result.error
 
     def test_deploy_network_error(self):
         import httpx
 
-        with (
-            patch("os.environ.get", side_effect=lambda k, d=None: {
-                "RENDER_DEPLOY_HOOK_URL": "https://api.render.com/deploy/srv-xxx",
-            }.get(k, d)),
-            patch("httpx.post", side_effect=httpx.HTTPError("connection failed")),
-        ):
-            result = RenderProvider().deploy()
+        with patch("httpx.post", side_effect=httpx.HTTPError("connection failed")):
+            result = RenderProvider().deploy(
+                env={"RENDER_DEPLOY_HOOK_URL": "https://api.render.com/deploy/srv-xxx"},
+            )
         assert result.success is False
 
 

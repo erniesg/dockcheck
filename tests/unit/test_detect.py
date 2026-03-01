@@ -310,10 +310,11 @@ class TestDetectNewProviderConfigs:
         ctx = RepoDetector().detect(str(tmp_path))
         assert ctx.has_cloudrun_config is True
 
-    def test_cloudrun_config_app_yaml(self, tmp_path: Path):
+    def test_app_yaml_is_not_cloudrun(self, tmp_path: Path):
+        """app.yaml is App Engine, not Cloud Run — should not trigger detection."""
         (tmp_path / "app.yaml").write_text("runtime: python39")
         ctx = RepoDetector().detect(str(tmp_path))
-        assert ctx.has_cloudrun_config is True
+        assert ctx.has_cloudrun_config is False
 
     def test_no_cloudrun_config(self, tmp_path: Path):
         ctx = RepoDetector().detect(str(tmp_path))

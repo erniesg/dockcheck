@@ -262,13 +262,18 @@ def _build_deploy_step(cfg: WorkflowConfig) -> str | None:
             "      - name: Deploy to Netlify\n"
             "        uses: nwtgck/actions-netlify@v3\n"
             "        with:\n"
-            "          publish-dir: './build'\n"
+            "          publish-dir: './dist'\n"
             "          production-deploy: true\n"
             f"{with_block}"
         )
 
     if cfg.deploy_provider == "docker-registry":
         return (
+            "      - name: Log in to Docker Hub\n"
+            "        uses: docker/login-action@v3\n"
+            "        with:\n"
+            "          username: ${{ secrets.DOCKER_USERNAME }}\n"
+            "          password: ${{ secrets.DOCKER_PASSWORD }}\n\n"
             "      - name: Build and push Docker image\n"
             "        uses: docker/build-push-action@v5\n"
             "        with:\n"
@@ -286,8 +291,10 @@ def _build_deploy_step(cfg: WorkflowConfig) -> str | None:
             "        uses: aws-actions/configure-aws-credentials@v4\n"
             "        with:\n"
             f"{with_block}\n\n"
-            "      - name: Deploy to AWS Lambda (SAM)\n"
-            "        run: sam deploy --no-confirm-changeset"
+            "      - name: Build and deploy to AWS Lambda (SAM)\n"
+            "        run: |\n"
+            "          sam build\n"
+            "          sam deploy --no-confirm-changeset"
         )
 
     if cfg.deploy_provider == "gcp-cloudrun":
@@ -301,7 +308,10 @@ def _build_deploy_step(cfg: WorkflowConfig) -> str | None:
             "        with:\n"
             f"{with_block}\n\n"
             "      - name: Deploy to Cloud Run\n"
-            "        run: gcloud run deploy --source ."
+            "        run: |\n"
+            "          gcloud run deploy ${{ github.event.repository.name }}"
+            " --source . --region us-central1"
+            " --project ${{ secrets.GCP_PROJECT_ID }} --quiet"
         )
 
     if cfg.deploy_provider == "railway":
@@ -317,7 +327,7 @@ def _build_deploy_step(cfg: WorkflowConfig) -> str | None:
     if cfg.deploy_provider == "render":
         return (
             "      - name: Deploy to Render\n"
-            "        run: curl -X POST ${{ secrets.RENDER_DEPLOY_HOOK_URL }}\n"
+            "        run: curl -sS -X POST \"$RENDER_DEPLOY_HOOK_URL\"\n"
             "        env:\n"
             "          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}"
         )

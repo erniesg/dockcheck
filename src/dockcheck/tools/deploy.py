@@ -296,9 +296,9 @@ class DockerRegistryProvider(DeployProvider):
         from pathlib import Path
 
         run_env = {**os.environ, **(env or {})}
-        image = os.environ.get("DOCKER_IMAGE")
+        image = run_env.get("DOCKER_IMAGE")
         if not image:
-            username = os.environ.get("DOCKER_USERNAME", "app")
+            username = run_env.get("DOCKER_USERNAME", "app")
             dirname = Path(workdir).resolve().name
             image = f"{username}/{dirname}:latest"
 
@@ -339,6 +339,10 @@ class DockerRegistryProvider(DeployProvider):
                 timeout=300,
                 env=run_env,
             )
+        except FileNotFoundError:
+            return DeployResult(
+                success=False, provider=self.name, error="docker CLI not found",
+            )
         except subprocess.TimeoutExpired:
             return DeployResult(
                 success=False, provider=self.name,
@@ -376,6 +380,34 @@ class AwsLambdaProvider(DeployProvider):
 
         run_env = {**os.environ, **(env or {})}
 
+        # Build first
+        try:
+            build = subprocess.run(
+                ["sam", "build"],
+                cwd=workdir,
+                capture_output=True,
+                text=True,
+                timeout=300,
+                env=run_env,
+            )
+        except FileNotFoundError:
+            return DeployResult(
+                success=False, provider=self.name, error="sam CLI not found",
+            )
+        except subprocess.TimeoutExpired:
+            return DeployResult(
+                success=False, provider=self.name,
+                error="Build timed out after 300 seconds",
+            )
+
+        if build.returncode != 0:
+            return DeployResult(
+                success=False, provider=self.name,
+                stdout=build.stdout, stderr=build.stderr,
+                error=build.stderr or "sam build failed",
+            )
+
+        # Deploy
         try:
             result = subprocess.run(
                 ["sam", "deploy", "--no-confirm-changeset"],
@@ -432,9 +464,20 @@ class GcpCloudRunProvider(DeployProvider):
 
         run_env = {**os.environ, **(env or {})}
 
+        from pathlib import Path as _Path
+
+        service_name = _Path(workdir).resolve().name
+        cmd = [
+            "gcloud", "run", "deploy", service_name,
+            "--source", ".",
+            "--region", run_env.get("GCP_REGION", "us-central1"),
+            "--project", run_env.get("GCP_PROJECT_ID", ""),
+            "--quiet",
+        ]
+
         try:
             result = subprocess.run(
-                ["gcloud", "run", "deploy", "--source", "."],
+                cmd,
                 cwd=workdir,
                 capture_output=True,
                 text=True,
@@ -545,7 +588,8 @@ class RenderProvider(DeployProvider):
 
         import httpx
 
-        hook_url = os.environ.get("RENDER_DEPLOY_HOOK_URL")
+        run_env = {**os.environ, **(env or {})}
+        hook_url = run_env.get("RENDER_DEPLOY_HOOK_URL")
         if not hook_url:
             return DeployResult(
                 success=False,

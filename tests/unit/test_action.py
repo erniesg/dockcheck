@@ -133,6 +133,7 @@ class TestDeployStepGeneration:
         )
         output = generate_workflow(config)
         assert "Docker" in output
+        assert "docker/login-action@v3" in output
         assert "docker/build-push-action@v5" in output
 
     def test_aws_lambda_deploy_step(self):
@@ -147,6 +148,7 @@ class TestDeployStepGeneration:
         output = generate_workflow(config)
         assert "AWS" in output
         assert "aws-actions/configure-aws-credentials@v4" in output
+        assert "sam build" in output
         assert "sam deploy" in output
 
     def test_gcp_cloudrun_deploy_step(self):

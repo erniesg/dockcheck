@@ -55,10 +55,7 @@ class RepoDetector:
             or (root / "template.yml").exists()
             or (root / "samconfig.toml").exists()
         )
-        ctx.has_cloudrun_config = (
-            (root / "cloudbuild.yaml").exists()
-            or (root / "app.yaml").exists()
-        )
+        ctx.has_cloudrun_config = (root / "cloudbuild.yaml").exists()
         ctx.has_railway_config = (
             (root / "railway.json").exists()
             or (root / "railway.toml").exists()

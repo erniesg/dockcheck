@@ -230,7 +230,7 @@ def _init_smart(
     (dockcheck_dir / "policy.yaml").write_text(default_policy)
 
     # Generate provider-aware workflow with lint/test/build commands
-    env_secrets = [s.name for s in selected.required_secrets]
+    env_secrets = [s.name for s in selected.required_secrets if s.required]
     wf_config = WorkflowConfig(
         trigger_on_push=True,
         env_secrets=env_secrets,
@@ -591,7 +591,7 @@ def _auto_init(
     policy = _default_policy("hackathon")
     (dockcheck_dir / "policy.yaml").write_text(policy)
 
-    env_secrets = [s.name for s in prov_spec.required_secrets]
+    env_secrets = [s.name for s in prov_spec.required_secrets if s.required]
     wf_config = WorkflowConfig(
         trigger_on_push=True,
         env_secrets=env_secrets,
