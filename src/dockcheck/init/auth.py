@@ -165,6 +165,42 @@ class AuthBootstrapper:
 
         return True
 
+    def check_app_secrets(
+        self, secrets: list[object]
+    ) -> AuthStatus:
+        """Check which app-level secrets are available locally.
+
+        Accepts a list of AppSecretSpec (or any object with a ``name`` attr).
+        """
+        gh_secrets = self._list_github_secrets()
+        statuses: list[SecretStatus] = []
+
+        for spec in secrets:
+            name = getattr(spec, "name", str(spec))
+            required = getattr(spec, "required", True)
+            setup_url = getattr(spec, "setup_url", "")
+
+            local = self._has_local(name)
+            github = name in gh_secrets
+
+            statuses.append(
+                SecretStatus(
+                    name=name,
+                    available_local=local,
+                    available_github=github,
+                    setup_url=setup_url,
+                    required=required,
+                )
+            )
+
+        all_ready = all(s.available_local for s in statuses if s.required)
+
+        return AuthStatus(
+            provider="app",
+            secrets=statuses,
+            all_ready=all_ready,
+        )
+
     def _has_local(self, name: str) -> bool:
         """Check if secret exists in environment or .env file."""
         if os.environ.get(name):

@@ -317,3 +317,80 @@ class TestAuthStatusModel:
         assert s.available_github is False
         assert s.setup_url == ""
         assert s.required is True
+
+
+# ---------------------------------------------------------------------------
+# App secret checking (extended auth)
+# ---------------------------------------------------------------------------
+
+
+class TestCheckAppSecrets:
+    def test_all_app_secrets_available(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-123")
+        monkeypatch.setenv("DATABASE_URL", "postgres://...")
+
+        from dockcheck.init.workspace import AppSecretSpec
+
+        secrets = [
+            AppSecretSpec(name="OPENAI_API_KEY"),
+            AppSecretSpec(name="DATABASE_URL"),
+        ]
+        auth = AuthBootstrapper(env_file=str(tmp_path / ".env"))
+        with patch.object(auth, "_list_github_secrets", return_value=set()):
+            status = auth.check_app_secrets(secrets)
+
+        assert status.all_ready is True
+        assert status.provider == "app"
+        assert len(status.secrets) == 2
+
+    def test_missing_app_secret(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+        from dockcheck.init.workspace import AppSecretSpec
+
+        secrets = [
+            AppSecretSpec(name="OPENAI_API_KEY"),
+        ]
+        auth = AuthBootstrapper(env_file=str(tmp_path / ".env"))
+        with patch.object(auth, "_list_github_secrets", return_value=set()):
+            status = auth.check_app_secrets(secrets)
+
+        assert status.all_ready is False
+        assert status.secrets[0].available_local is False
+
+    def test_optional_app_secret_not_blocking(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("OPTIONAL_KEY", raising=False)
+
+        from dockcheck.init.workspace import AppSecretSpec
+
+        secrets = [
+            AppSecretSpec(name="OPTIONAL_KEY", required=False),
+        ]
+        auth = AuthBootstrapper(env_file=str(tmp_path / ".env"))
+        with patch.object(auth, "_list_github_secrets", return_value=set()):
+            status = auth.check_app_secrets(secrets)
+
+        assert status.all_ready is True
+
+    def test_app_secret_from_env_file(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        env_file = tmp_path / ".env"
+        env_file.write_text("OPENAI_API_KEY=sk-from-file\n")
+
+        from dockcheck.init.workspace import AppSecretSpec
+
+        secrets = [AppSecretSpec(name="OPENAI_API_KEY")]
+        auth = AuthBootstrapper(env_file=str(env_file))
+        with patch.object(auth, "_list_github_secrets", return_value=set()):
+            status = auth.check_app_secrets(secrets)
+
+        assert status.all_ready is True
+        assert status.secrets[0].available_local is True
+
+    def test_empty_app_secrets_list(self, tmp_path):
+        auth = AuthBootstrapper(env_file=str(tmp_path / ".env"))
+        with patch.object(auth, "_list_github_secrets", return_value=set()):
+            status = auth.check_app_secrets([])
+
+        assert status.all_ready is True
+        assert status.secrets == []

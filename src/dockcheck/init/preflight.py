@@ -30,6 +30,7 @@ class PreflightResult(BaseModel):
     missing_secrets: list[str] = Field(default_factory=list)
     missing_cli: str | None = None
     install_hint: str = ""
+    workspace_targets: int = 0
 
     @property
     def blocking(self) -> list[PreflightItem]:
@@ -200,6 +201,40 @@ class PreflightChecker:
                 required=False,
             ))
 
+        # 8. Workspace detection (advisory)
+        workspace_targets = 0
+        try:
+            from dockcheck.init.workspace import WorkspaceResolver
+
+            ws_resolver = WorkspaceResolver()
+            ws = ws_resolver.resolve(str(target))
+            if ws is not None:
+                workspace_targets = len(ws.targets)
+                items.append(PreflightItem(
+                    name="workspace",
+                    passed=True,
+                    message=f"{workspace_targets} targets detected",
+                    required=False,
+                ))
+
+                # Check app secrets for each target
+                for t in ws.targets:
+                    if t.app_secrets:
+                        app_status = auth.check_app_secrets(t.app_secrets)
+                        missing_app = [
+                            s.name for s in app_status.secrets
+                            if not s.available_local and s.required
+                        ]
+                        if missing_app:
+                            items.append(PreflightItem(
+                                name=f"app_secrets:{t.name}",
+                                passed=False,
+                                message=f"{t.name}: missing {', '.join(missing_app)}",
+                                required=False,  # Advisory, not blocking
+                            ))
+        except Exception:
+            pass  # Workspace detection is optional
+
         blocking = [i for i in items if not i.passed and i.required]
         ready = len(blocking) == 0
 
@@ -212,4 +247,5 @@ class PreflightChecker:
             missing_secrets=missing_required,
             missing_cli=provider.cli_tool if not cli_available else None,
             install_hint=cli_fix_hint if not cli_available else "",
+            workspace_targets=workspace_targets,
         )

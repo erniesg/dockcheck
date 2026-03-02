@@ -172,12 +172,14 @@ class Orchestrator:
         scorer: ConfidenceScorer | None = None,
         notifier: Notifier | None = None,
         max_retries: int = 1,
+        skills_dir: str | None = None,
     ) -> None:
         self._policy = policy_engine
         self._dispatcher = dispatcher or AgentDispatcher()
         self._scorer = scorer or ConfidenceScorer()
         self._notifier = notifier or StdoutNotifier()
         self._max_retries = max_retries
+        self._skills_dir = skills_dir
 
     # ------------------------------------------------------------------
     # Public API
@@ -570,14 +572,12 @@ class Orchestrator:
     # Internal utilities
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _build_prompt(step: StepConfig, context: dict) -> str:
+    def _build_prompt(self, step: StepConfig, context: dict) -> str:
         """Build the agent prompt for a given step.
 
-        The prompt includes the skill name and any relevant context so the
-        agent knows what to do.  In a full implementation this would load the
-        skill's prompt template from disk; here we produce a structured prompt
-        that is sufficient for testing.
+        Loads skill instructions from disk when a skills directory is
+        configured (via ``__init__`` or ``context["skills_dir"]``).
+        Falls back to the skill name when the skill file is not found.
 
         Args:
             step: The step configuration.
@@ -588,8 +588,24 @@ class Orchestrator:
         """
         lines = [
             f"You are performing the '{step.name}' step of a CI/CD pipeline.",
-            f"Skill: {step.skill}",
         ]
+
+        # Load skill instructions if available
+        skills_dir = context.get("skills_dir") or self._skills_dir
+        if skills_dir:
+            from dockcheck.skills.loader import SkillLoader
+
+            try:
+                loader = SkillLoader(skills_dir=skills_dir)
+                skill = loader.load(step.skill)
+                lines.append(f"\n{skill.instructions}")
+            except FileNotFoundError:
+                lines.append(f"Skill: {step.skill}")
+        else:
+            lines.append(f"Skill: {step.skill}")
+
+        if context.get("secret_audit"):
+            lines.append(f"\nSecret Audit:\n{context['secret_audit']}")
 
         if context.get("diff"):
             lines.append(f"\nDiff:\n{context['diff']}")

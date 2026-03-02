@@ -13,7 +13,9 @@ from dockcheck.skills.loader import Skill, SkillLoader, SkillMetadata
 BUILT_IN_SKILLS_DIR = Path(__file__).parent.parent.parent / ".dockcheck" / "skills"
 
 # Expected built-in skill names (directory names)
-EXPECTED_SKILL_DIRS = {"analyze", "test", "test-writer", "deploy", "verify", "notify"}
+EXPECTED_SKILL_DIRS = {
+    "analyze", "test", "test-writer", "deploy", "verify", "notify", "secret-audit",
+}
 
 
 class TestSkillDiscovery:

@@ -132,6 +132,14 @@ def _init_smart(
     from dockcheck.init.auth import AuthBootstrapper
     from dockcheck.init.detect import RepoDetector
     from dockcheck.init.providers import ProviderRegistry
+    from dockcheck.init.workspace import WorkspaceResolver
+
+    # Check for workspace (multi-target monorepo)
+    ws_resolver = WorkspaceResolver()
+    ws = ws_resolver.resolve(str(target))
+    if ws is not None and not provider_name:
+        _init_workspace(target, dockcheck_dir, ws, non_interactive)
+        return
 
     detector = RepoDetector()
     registry = ProviderRegistry()
@@ -253,6 +261,106 @@ def _init_smart(
     click.echo("\nReady! Push to deploy.")
 
 
+def _init_workspace(
+    target: Path,
+    dockcheck_dir: Path,
+    ws: object,
+    non_interactive: bool,
+) -> None:
+    """Initialize a multi-target workspace: scan secrets, write config."""
+    from dockcheck.init.secret_scanner import SecretScanner
+    from dockcheck.init.workspace import AppSecretSpec, WorkspaceConfig
+
+    if not isinstance(ws, WorkspaceConfig):
+        return
+
+    click.echo(f"\nWorkspace detected: {len(ws.targets)} targets")
+
+    # Scan each target for app secrets
+    scanner = SecretScanner()
+    for t in ws.targets:
+        target_path = target / t.path
+        if target_path.is_dir():
+            scan_result = scanner.scan(str(target_path))
+            t.app_secrets = [
+                AppSecretSpec(name=name, source="scanned")
+                for name in scan_result.unique_names
+            ]
+            if scan_result.unique_names:
+                click.echo(
+                    f"  {t.name}: {len(scan_result.unique_names)} app secrets found"
+                )
+
+    # Write workspace config
+    ws_file = target / "dockcheck.workspace.yaml"
+    ws_file.write_text(ws.to_yaml())
+    click.echo(f"\nGenerated: {ws_file}")
+
+    # Create .dockcheck/ with default policy
+    dockcheck_dir.mkdir(parents=True, exist_ok=True)
+    (dockcheck_dir / "skills").mkdir(exist_ok=True)
+    policy = _default_policy("hackathon")
+    (dockcheck_dir / "policy.yaml").write_text(policy)
+    click.echo(f"Generated: {dockcheck_dir / 'policy.yaml'}")
+
+    # Generate multi-job GitHub Actions workflow
+    wf_yaml = _generate_workspace_workflow(ws)
+    wf_dir = target / ".github" / "workflows"
+    wf_dir.mkdir(parents=True, exist_ok=True)
+    wf_path = wf_dir / "dockcheck.yml"
+    wf_path.write_text(wf_yaml)
+    click.echo(f"Generated: {wf_path}")
+
+    click.echo("\nReady! Push to deploy.")
+
+
+def _generate_workspace_workflow(ws: object) -> str:
+    """Generate a multi-job GitHub Actions workflow for a workspace."""
+    from dockcheck.init.workspace import WorkspaceConfig
+
+    if not isinstance(ws, WorkspaceConfig):
+        return ""
+
+    lines = [
+        "name: dockcheck CI/CD",
+        "",
+        "on:",
+        "  push:",
+        "    branches: [main]",
+        "  pull_request:",
+        "    types: [opened, synchronize, reopened]",
+        "",
+        "jobs:",
+    ]
+
+    for t in ws.targets:
+        needs_str = ""
+        if t.depends_on:
+            needs_list = ", ".join(t.depends_on)
+            needs_str = f"\n    needs: [{needs_list}]"
+
+        lines.append(f"  {t.name}:")
+        lines.append(f"    runs-on: ubuntu-latest{needs_str}")
+        lines.append("    defaults:")
+        lines.append("      run:")
+        lines.append(f"        working-directory: {t.path}")
+        lines.append("    steps:")
+        lines.append("      - uses: actions/checkout@v4")
+        if t.provider in ("cloudflare", "vercel", "netlify"):
+            lines.append("      - uses: actions/setup-node@v4")
+            lines.append("        with:")
+            lines.append("          node-version: '20'")
+        lines.append("      - name: Install and test")
+        lines.append("        run: |")
+        lines.append(f"          echo 'Testing {t.name}'")
+        if t.provider:
+            lines.append(f"      - name: Deploy ({t.provider})")
+            lines.append(f"        run: echo 'Deploying {t.name} via {t.provider}'")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
 @cli.command()
 @click.option(
     "--policy", "policy_path", type=click.Path(),
@@ -324,6 +432,7 @@ def check(
 @click.option("--skip-lint", is_flag=True, help="Skip lint step")
 @click.option("--skip-test", is_flag=True, help="Skip test step")
 @click.option("--skip-deploy", is_flag=True, help="Skip deploy step")
+@click.option("--agent", is_flag=True, help="Use AI agent pipeline instead of subprocess")
 def run(
     policy_path: str | None,
     target_dir: str,
@@ -331,6 +440,7 @@ def run(
     skip_lint: bool,
     skip_test: bool,
     skip_deploy: bool,
+    agent: bool,
 ) -> None:
     """Execute the full CI/CD pipeline: lint -> test -> check -> deploy."""
     from dockcheck.init.detect import RepoDetector
@@ -340,6 +450,20 @@ def run(
     # Detect project context
     detector = RepoDetector()
     ctx = detector.detect(str(target))
+
+    deploy_provider_name = _detect_deploy_provider(target, ctx)
+
+    if agent:
+        _run_agent_pipeline(
+            target=target,
+            policy_path=policy_path,
+            skip_lint=skip_lint,
+            skip_test=skip_test,
+            skip_deploy=skip_deploy,
+            provider_name=deploy_provider_name,
+            dry_run=dry_run,
+        )
+        return
 
     # Build pipeline steps
     steps: list[tuple[str, str | None]] = []
@@ -355,7 +479,6 @@ def run(
     steps.append(("CHECK", "dockcheck check"))
 
     # Deploy
-    deploy_provider_name = _detect_deploy_provider(target, ctx)
     if not skip_deploy and deploy_provider_name:
         steps.append(("DEPLOY", f"deploy:{deploy_provider_name}"))
 
@@ -454,6 +577,7 @@ def deploy(provider: str | None, target_dir: str) -> None:
     "--non-interactive", is_flag=True,
     help="Skip interactive prompts (fail if secrets missing).",
 )
+@click.option("--agent", is_flag=True, help="Use AI agent pipeline instead of subprocess")
 def ship(
     provider: str | None,
     target_dir: str,
@@ -461,6 +585,7 @@ def ship(
     skip_test: bool,
     dry_run: bool,
     non_interactive: bool,
+    agent: bool,
 ) -> None:
     """Ship it: preflight -> init -> auth -> lint -> test -> check -> deploy.
 
@@ -477,6 +602,20 @@ def ship(
     from dockcheck.init.preflight import PreflightChecker
 
     target = Path(target_dir).resolve()
+
+    # --- Check for workspace mode -------------------------------------------
+    ws = _resolve_workspace_or_single(target)
+    if ws is not None:
+        _ship_workspace(
+            target=target,
+            ws=ws,
+            skip_lint=skip_lint,
+            skip_test=skip_test,
+            dry_run=dry_run,
+            non_interactive=non_interactive,
+            agent=agent,
+        )
+        return
 
     # --- Preflight -----------------------------------------------------------
     click.echo("Preflight checks...\n")
@@ -562,13 +701,24 @@ def ship(
         return
 
     # --- Run pipeline: lint -> test -> check -> deploy -----------------------
-    _run_pipeline(
-        target=target,
-        provider_name=preflight.provider_name,
-        skip_lint=skip_lint,
-        skip_test=skip_test,
-        include_deploy=True,
-    )
+    if agent:
+        _run_agent_pipeline(
+            target=target,
+            policy_path=None,
+            skip_lint=skip_lint,
+            skip_test=skip_test,
+            skip_deploy=False,
+            provider_name=preflight.provider_name,
+            dry_run=False,
+        )
+    else:
+        _run_pipeline(
+            target=target,
+            provider_name=preflight.provider_name,
+            skip_lint=skip_lint,
+            skip_test=skip_test,
+            include_deploy=True,
+        )
 
 
 @cli.command()
@@ -585,6 +735,116 @@ def validate(policy_path: str | None) -> None:
         click.echo(f"  Notification channels: {len(policy.notifications.channels)}")
     except Exception as e:
         click.echo(f"Policy invalid: {e}", err=True)
+        sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
+# `dockcheck secrets` command group
+# ---------------------------------------------------------------------------
+
+
+@cli.group()
+def secrets() -> None:
+    """Inspect and audit secret/env-var references in source code."""
+
+
+@secrets.command("scan")
+@click.option(
+    "--dir", "target_dir", type=click.Path(), default=".",
+    help="Directory to scan.",
+)
+def secrets_scan(target_dir: str) -> None:
+    """List all env var references found in source code."""
+    from dockcheck.init.secret_scanner import SecretScanner
+
+    scanner = SecretScanner()
+    result = scanner.scan(target_dir)
+
+    if not result.refs:
+        click.echo("No env var references found.")
+        return
+
+    click.echo(f"Found {len(result.refs)} reference(s) to {len(result.unique_names)} secret(s):\n")
+    for name in result.unique_names:
+        refs = [r for r in result.refs if r.name == name]
+        click.echo(f"  {name}")
+        for ref in refs:
+            click.echo(f"    {ref.file_path}:{ref.line}")
+
+
+@secrets.command("audit")
+@click.option(
+    "--dir", "target_dir", type=click.Path(), default=".",
+    help="Directory to audit.",
+)
+@click.option("--json-output", "json_out", is_flag=True, help="Output as JSON")
+def secrets_audit(target_dir: str, json_out: bool) -> None:
+    """Enriched audit: code context, defaults, test-file detection."""
+    from dockcheck.tools.audit import SecretAuditor
+
+    auditor = SecretAuditor()
+    result = auditor.audit(target_dir)
+
+    if json_out:
+        click.echo(result.model_dump_json(indent=2))
+        return
+
+    if not result.contexts:
+        click.echo("No env var references found.")
+        return
+
+    click.echo(
+        f"Audit: {result.total_references} reference(s), "
+        f"{len(result.unique_secrets)} unique secret(s)\n"
+    )
+    for name in result.unique_secrets:
+        ctxs = [c for c in result.contexts if c.name == name]
+        status_parts: list[str] = []
+        if any(c.has_default for c in ctxs):
+            status_parts.append("has default")
+        if any(c.in_test_file for c in ctxs):
+            status_parts.append("test file")
+        if name in result.missing:
+            status_parts.append("MISSING")
+        elif name in result.available_in_env:
+            status_parts.append("available")
+        status = f" ({', '.join(status_parts)})" if status_parts else ""
+        click.echo(f"  {name}{status}")
+        for ctx in ctxs:
+            click.echo(f"    {ctx.file_path}:{ctx.line}")
+
+
+@secrets.command("check")
+@click.option(
+    "--dir", "target_dir", type=click.Path(), default=".",
+    help="Directory to check.",
+)
+def secrets_check(target_dir: str) -> None:
+    """Check which secrets are set vs missing."""
+    from dockcheck.tools.audit import SecretAuditor
+
+    auditor = SecretAuditor()
+    result = auditor.audit(target_dir)
+
+    if not result.unique_secrets:
+        click.echo("No secrets referenced.")
+        return
+
+    if result.available_in_env:
+        click.echo("Available:")
+        for name in result.available_in_env:
+            click.echo(f"  {name}")
+
+    if result.missing:
+        click.echo("Missing:")
+        for name in result.missing:
+            click.echo(f"  {name}")
+
+    total = len(result.unique_secrets)
+    avail = len(result.available_in_env)
+    click.echo(f"\n{avail}/{total} secrets available.")
+
+    if result.missing:
         sys.exit(1)
 
 
@@ -713,6 +973,232 @@ def _run_pipeline(
     click.echo("\nPipeline complete!")
 
 
+def _resolve_workspace_or_single(target: Path) -> object | None:
+    """Return a WorkspaceConfig if the target is a multi-target workspace, else None."""
+    from dockcheck.init.workspace import WorkspaceResolver
+
+    resolver = WorkspaceResolver()
+    return resolver.resolve(str(target))
+
+
+def _ship_workspace(
+    target: Path,
+    ws: object,
+    skip_lint: bool = False,
+    skip_test: bool = False,
+    dry_run: bool = False,
+    non_interactive: bool = False,
+    agent: bool = False,
+) -> None:
+    """Ship a multi-target workspace: resolve order, deploy each target."""
+    from dockcheck.init.workspace import WorkspaceConfig, WorkspaceResolver
+
+    # Type narrow
+    if not isinstance(ws, WorkspaceConfig):
+        return
+
+    layers = WorkspaceResolver.resolve_target_order(ws.targets)
+
+    click.echo("Preflight checks...\n")
+    click.echo(f"  [  ok] workspace: {len(ws.targets)} targets detected")
+    for t in ws.targets:
+        deps = f" (depends: {', '.join(t.depends_on)})" if t.depends_on else ""
+        click.echo(f"         - {t.name} ({t.path}) [{t.provider or 'auto'}]{deps}")
+    click.echo()
+
+    if dry_run:
+        click.echo("Workspace pipeline plan (dry run):\n")
+        for layer_idx, layer in enumerate(layers):
+            layer_names = ", ".join(t.name for t in layer)
+            click.echo(f"  Layer {layer_idx}: [{layer_names}]")
+            for t in layer:
+                click.echo(f"    {t.name} ({t.path}):")
+                if not skip_lint:
+                    click.echo("      1. LINT")
+                if not skip_test:
+                    click.echo("      2. TEST")
+                click.echo("      3. CHECK")
+                if t.provider:
+                    click.echo(f"      4. DEPLOY: {t.provider}")
+        click.echo(f"\nTargets: {len(ws.targets)} across {len(layers)} layers")
+        click.echo("Use without --dry-run to ship.")
+        return
+
+    # Execute each layer sequentially, targets within a layer sequentially
+    total = len(ws.targets)
+    deployed = 0
+    failed = 0
+
+    for layer_idx, layer in enumerate(layers):
+        for t in layer:
+            click.echo(f"\n--- {t.name} ({t.path}) ---")
+            target_path = target / t.path
+
+            if not target_path.is_dir():
+                click.echo(f"  Error: directory not found: {t.path}", err=True)
+                failed += 1
+                continue
+
+            provider_name = t.provider or _detect_deploy_provider(
+                target_path, None
+            )
+
+            if agent:
+                _run_agent_pipeline(
+                    target=target_path,
+                    policy_path=None,
+                    skip_lint=skip_lint,
+                    skip_test=skip_test,
+                    skip_deploy=False,
+                    provider_name=provider_name,
+                    dry_run=False,
+                )
+            else:
+                _run_pipeline(
+                    target=target_path,
+                    provider_name=provider_name,
+                    skip_lint=skip_lint,
+                    skip_test=skip_test,
+                    include_deploy=provider_name is not None,
+                )
+            deployed += 1
+
+    click.echo(f"\nPipeline complete! {deployed}/{total} targets deployed.")
+    if failed:
+        click.echo(f"  {failed} target(s) failed.", err=True)
+        sys.exit(1)
+
+
+def _run_agent_pipeline(
+    target: Path,
+    policy_path: str | None = None,
+    skip_lint: bool = False,
+    skip_test: bool = False,
+    skip_deploy: bool = False,
+    provider_name: str | None = None,
+    dry_run: bool = False,
+) -> None:
+    """Execute the AI agent pipeline via the Orchestrator."""
+    import asyncio
+
+    from dockcheck.agents.schemas import PipelineConfig, StepConfig
+    from dockcheck.core.confidence import ConfidenceScorer
+    from dockcheck.core.orchestrator import Orchestrator, StdoutNotifier
+
+    # Build agent pipeline steps
+    steps: list[StepConfig] = []
+    deps: list[str] = []
+
+    steps.append(StepConfig(name="analyze", skill="analyze", agent="claude"))
+    deps = ["analyze"]
+
+    if not skip_test:
+        steps.append(
+            StepConfig(name="test", skill="test", agent="claude", depends_on=list(deps))
+        )
+        deps = ["test"]
+
+    steps.append(
+        StepConfig(name="verify", skill="verify", agent="claude", depends_on=list(deps))
+    )
+    deps = ["verify"]
+
+    if not skip_deploy and provider_name:
+        steps.append(
+            StepConfig(
+                name="deploy",
+                skill="deploy",
+                agent="claude",
+                depends_on=list(deps),
+            )
+        )
+
+    pipeline = PipelineConfig(steps=steps)
+
+    if dry_run:
+        click.echo("Agent pipeline plan (dry run):")
+        for i, step in enumerate(steps, 1):
+            dep_str = f" (after: {', '.join(step.depends_on)})" if step.depends_on else ""
+            click.echo(f"  {i}. {step.name:<10} skill={step.skill}{dep_str}")
+        click.echo(f"\nAgent: {steps[0].agent}")
+        click.echo(f"Project: {target}")
+        if provider_name:
+            click.echo(f"Deploy target: {provider_name}")
+        return
+
+    # Build policy engine
+    policy_file = _find_policy_quiet(policy_path, target)
+    if policy_file:
+        engine = PolicyEngine.from_yaml(policy_file)
+    else:
+        from dockcheck.core.policy import Policy
+
+        engine = PolicyEngine(Policy.from_dict({
+            "version": "1",
+            "confidence_thresholds": {
+                "auto_deploy_staging": 0.6,
+                "auto_promote_prod": 0.7,
+                "notify_human": 0.3,
+            },
+            "hard_stops": {"commands": [{"pattern": "rm -rf"}]},
+        }))
+
+    # Resolve skills directory
+    skills_dir = str(target / ".dockcheck" / "skills")
+
+    # Build context from git diff
+    context: dict = {}
+    try:
+        diff_result = subprocess.run(
+            ["git", "diff", "HEAD~1"],
+            cwd=str(target),
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if diff_result.returncode == 0 and diff_result.stdout.strip():
+            context["diff"] = diff_result.stdout
+
+        files_result = subprocess.run(
+            ["git", "diff", "--name-only", "HEAD~1"],
+            cwd=str(target),
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if files_result.returncode == 0 and files_result.stdout.strip():
+            context["file_paths"] = files_result.stdout.strip().splitlines()
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        pass
+
+    click.echo("Running agent pipeline...\n")
+    for i, step in enumerate(steps, 1):
+        click.echo(f"  [{i}/{len(steps)}] {step.name} (skill={step.skill})")
+
+    orch = Orchestrator(
+        policy_engine=engine,
+        scorer=ConfidenceScorer(),
+        notifier=StdoutNotifier(),
+        skills_dir=skills_dir,
+    )
+
+    result = asyncio.run(orch.run_pipeline(pipeline, context))
+
+    click.echo(f"\nConfidence: {result.confidence:.2f}")
+    if result.success:
+        click.echo("Decision: DEPLOY")
+    elif result.blocked:
+        click.echo("Decision: BLOCK")
+        for reason in result.block_reasons:
+            click.echo(f"  - {reason}")
+        sys.exit(2)
+    else:
+        click.echo("Decision: NOTIFY (requires human review)")
+        for reason in result.block_reasons:
+            click.echo(f"  - {reason}")
+        sys.exit(1)
+
+
 def _find_policy_quiet(
     path: str | None, target: Path | None = None
 ) -> Path | None:
@@ -735,9 +1221,14 @@ def _find_policy_quiet(
     return None
 
 
-def _detect_deploy_provider(target: Path, ctx: object) -> str | None:
+def _detect_deploy_provider(target: Path, ctx: object | None = None) -> str | None:
     """Detect the deploy provider from project config."""
+    from dockcheck.init.detect import RepoDetector
     from dockcheck.init.providers import ProviderRegistry
+
+    if ctx is None:
+        detector = RepoDetector()
+        ctx = detector.detect(str(target))
 
     registry = ProviderRegistry()
     detected = registry.detect(ctx)

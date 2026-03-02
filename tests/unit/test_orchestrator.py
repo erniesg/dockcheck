@@ -647,3 +647,85 @@ class TestNotifier:
         await orch.run_pipeline(pipeline)
         events = [call[0][0] for call in notifier.notify.call_args_list]
         assert "block" in events
+
+
+# ---------------------------------------------------------------------------
+# _build_prompt with skills
+# ---------------------------------------------------------------------------
+
+
+class TestBuildPromptWithSkills:
+    def test_loads_skill_content(self, tmp_path):
+        """When skills_dir is set and skill exists, prompt includes instructions."""
+        skill_dir = tmp_path / "analyze"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            "# Analyze\n\n## Purpose\nAssess blast radius.\n\n## Instructions\n"
+            "1. Read the diff\n2. Check files\n"
+        )
+        engine = _make_policy()
+        orch = Orchestrator(
+            policy_engine=engine,
+            notifier=NullNotifier(),
+            skills_dir=str(tmp_path),
+        )
+        step = StepConfig(name="analyze", skill="analyze")
+        prompt = orch._build_prompt(step, {})
+        assert "Assess blast radius" in prompt
+        assert "Read the diff" in prompt
+
+    def test_falls_back_when_skill_missing(self):
+        """When skills_dir is set but skill not found, falls back to skill name."""
+        engine = _make_policy()
+        orch = Orchestrator(
+            policy_engine=engine,
+            notifier=NullNotifier(),
+            skills_dir="/nonexistent",
+        )
+        step = StepConfig(name="test", skill="test")
+        prompt = orch._build_prompt(step, {})
+        assert "Skill: test" in prompt
+
+    def test_includes_diff_with_skill(self, tmp_path):
+        """Diff context is appended after skill instructions."""
+        skill_dir = tmp_path / "analyze"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            "# Analyze\n\n## Purpose\nCheck code.\n"
+        )
+        engine = _make_policy()
+        orch = Orchestrator(
+            policy_engine=engine,
+            notifier=NullNotifier(),
+            skills_dir=str(tmp_path),
+        )
+        step = StepConfig(name="analyze", skill="analyze")
+        prompt = orch._build_prompt(step, {"diff": "--- a/foo\n+++ b/foo"})
+        assert "Check code" in prompt
+        assert "--- a/foo" in prompt
+
+    def test_no_skills_dir_uses_skill_name(self):
+        """Without skills_dir, prompt shows skill name as before."""
+        engine = _make_policy()
+        orch = Orchestrator(policy_engine=engine, notifier=NullNotifier())
+        step = StepConfig(name="verify", skill="verify")
+        prompt = orch._build_prompt(step, {})
+        assert "Skill: verify" in prompt
+
+    def test_build_prompt_includes_secret_audit(self):
+        """When context has secret_audit, prompt includes it."""
+        engine = _make_policy()
+        orch = Orchestrator(policy_engine=engine, notifier=NullNotifier())
+        step = StepConfig(name="analyze", skill="analyze")
+        audit_json = '{"unique_secrets": ["API_KEY"], "missing": ["API_KEY"]}'
+        prompt = orch._build_prompt(step, {"secret_audit": audit_json})
+        assert "Secret Audit:" in prompt
+        assert "API_KEY" in prompt
+
+    def test_build_prompt_no_secret_audit_when_absent(self):
+        """When context lacks secret_audit, prompt does not include it."""
+        engine = _make_policy()
+        orch = Orchestrator(policy_engine=engine, notifier=NullNotifier())
+        step = StepConfig(name="analyze", skill="analyze")
+        prompt = orch._build_prompt(step, {})
+        assert "Secret Audit:" not in prompt
