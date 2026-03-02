@@ -32,6 +32,14 @@ class DeployProvider(ABC):
         ...
 
     @abstractmethod
+    def destroy(
+        self,
+        workdir: str = ".",
+        env: dict[str, str] | None = None,
+    ) -> DeployResult:
+        ...
+
+    @abstractmethod
     def is_available(self) -> bool:
         ...
 
@@ -90,6 +98,45 @@ class CloudflareProvider(DeployProvider):
             success=result.returncode == 0,
             provider=self.name,
             url=url,
+            stdout=result.stdout,
+            stderr=result.stderr,
+            error=result.stderr if result.returncode != 0 else None,
+        )
+
+    def destroy(
+        self,
+        workdir: str = ".",
+        env: dict[str, str] | None = None,
+    ) -> DeployResult:
+        import os
+
+        run_env = {**os.environ, **(env or {})}
+
+        try:
+            result = subprocess.run(
+                ["wrangler", "delete"],
+                cwd=workdir,
+                capture_output=True,
+                text=True,
+                timeout=120,
+                env=run_env,
+            )
+        except FileNotFoundError:
+            return DeployResult(
+                success=False,
+                provider=self.name,
+                error="wrangler CLI not found",
+            )
+        except subprocess.TimeoutExpired:
+            return DeployResult(
+                success=False,
+                provider=self.name,
+                error="Destroy timed out after 120 seconds",
+            )
+
+        return DeployResult(
+            success=result.returncode == 0,
+            provider=self.name,
             stdout=result.stdout,
             stderr=result.stderr,
             error=result.stderr if result.returncode != 0 else None,
@@ -156,6 +203,45 @@ class VercelProvider(DeployProvider):
             error=result.stderr if result.returncode != 0 else None,
         )
 
+    def destroy(
+        self,
+        workdir: str = ".",
+        env: dict[str, str] | None = None,
+    ) -> DeployResult:
+        import os
+
+        run_env = {**os.environ, **(env or {})}
+
+        try:
+            result = subprocess.run(
+                ["vercel", "remove", "--yes"],
+                cwd=workdir,
+                capture_output=True,
+                text=True,
+                timeout=120,
+                env=run_env,
+            )
+        except FileNotFoundError:
+            return DeployResult(
+                success=False,
+                provider=self.name,
+                error="vercel CLI not found",
+            )
+        except subprocess.TimeoutExpired:
+            return DeployResult(
+                success=False,
+                provider=self.name,
+                error="Destroy timed out after 120 seconds",
+            )
+
+        return DeployResult(
+            success=result.returncode == 0,
+            provider=self.name,
+            stdout=result.stdout,
+            stderr=result.stderr,
+            error=result.stderr if result.returncode != 0 else None,
+        )
+
     @staticmethod
     def _extract_url(stdout: str) -> str | None:
         """Extract production URL from vercel output."""
@@ -213,6 +299,69 @@ class FlyProvider(DeployProvider):
             error=result.stderr if result.returncode != 0 else None,
         )
 
+    def destroy(
+        self,
+        workdir: str = ".",
+        env: dict[str, str] | None = None,
+    ) -> DeployResult:
+        import os
+
+        run_env = {**os.environ, **(env or {})}
+
+        # Read app name from fly.toml
+        app_name = self._read_app_name(workdir)
+        if not app_name:
+            return DeployResult(
+                success=False,
+                provider=self.name,
+                error="Could not read app name from fly.toml",
+            )
+
+        try:
+            result = subprocess.run(
+                ["fly", "apps", "destroy", app_name, "--yes"],
+                cwd=workdir,
+                capture_output=True,
+                text=True,
+                timeout=120,
+                env=run_env,
+            )
+        except FileNotFoundError:
+            return DeployResult(
+                success=False,
+                provider=self.name,
+                error="fly CLI not found",
+            )
+        except subprocess.TimeoutExpired:
+            return DeployResult(
+                success=False,
+                provider=self.name,
+                error="Destroy timed out after 120 seconds",
+            )
+
+        return DeployResult(
+            success=result.returncode == 0,
+            provider=self.name,
+            stdout=result.stdout,
+            stderr=result.stderr,
+            error=result.stderr if result.returncode != 0 else None,
+        )
+
+    @staticmethod
+    def _read_app_name(workdir: str) -> str | None:
+        """Read app name from fly.toml."""
+        from pathlib import Path
+
+        fly_toml = Path(workdir) / "fly.toml"
+        if not fly_toml.exists():
+            return None
+        for line in fly_toml.read_text().splitlines():
+            if line.strip().startswith("app"):
+                # Parse: app = "my-app" or app = 'my-app'
+                _, _, value = line.partition("=")
+                return value.strip().strip("\"'")
+        return None
+
     @staticmethod
     def _extract_url(stdout: str) -> str | None:
         match = re.search(r"https://\S+\.fly\.dev", stdout)
@@ -264,6 +413,45 @@ class NetlifyProvider(DeployProvider):
             success=result.returncode == 0,
             provider=self.name,
             url=url,
+            stdout=result.stdout,
+            stderr=result.stderr,
+            error=result.stderr if result.returncode != 0 else None,
+        )
+
+    def destroy(
+        self,
+        workdir: str = ".",
+        env: dict[str, str] | None = None,
+    ) -> DeployResult:
+        import os
+
+        run_env = {**os.environ, **(env or {})}
+
+        try:
+            result = subprocess.run(
+                ["netlify", "sites:delete", "--force"],
+                cwd=workdir,
+                capture_output=True,
+                text=True,
+                timeout=120,
+                env=run_env,
+            )
+        except FileNotFoundError:
+            return DeployResult(
+                success=False,
+                provider=self.name,
+                error="netlify CLI not found",
+            )
+        except subprocess.TimeoutExpired:
+            return DeployResult(
+                success=False,
+                provider=self.name,
+                error="Destroy timed out after 120 seconds",
+            )
+
+        return DeployResult(
+            success=result.returncode == 0,
+            provider=self.name,
             stdout=result.stdout,
             stderr=result.stderr,
             error=result.stderr if result.returncode != 0 else None,
@@ -358,6 +546,17 @@ class DockerRegistryProvider(DeployProvider):
             error=push.stderr if push.returncode != 0 else None,
         )
 
+    def destroy(
+        self,
+        workdir: str = ".",
+        env: dict[str, str] | None = None,
+    ) -> DeployResult:
+        return DeployResult(
+            success=True,
+            provider=self.name,
+            stdout="No-op: cannot delete images from remote registry via CLI",
+        )
+
 
 class AwsLambdaProvider(DeployProvider):
     """Deploys via `sam deploy --no-confirm-changeset`."""
@@ -437,6 +636,45 @@ class AwsLambdaProvider(DeployProvider):
             error=result.stderr if result.returncode != 0 else None,
         )
 
+    def destroy(
+        self,
+        workdir: str = ".",
+        env: dict[str, str] | None = None,
+    ) -> DeployResult:
+        import os
+
+        run_env = {**os.environ, **(env or {})}
+
+        try:
+            result = subprocess.run(
+                ["sam", "delete", "--no-prompts"],
+                cwd=workdir,
+                capture_output=True,
+                text=True,
+                timeout=300,
+                env=run_env,
+            )
+        except FileNotFoundError:
+            return DeployResult(
+                success=False,
+                provider=self.name,
+                error="sam CLI not found",
+            )
+        except subprocess.TimeoutExpired:
+            return DeployResult(
+                success=False,
+                provider=self.name,
+                error="Destroy timed out after 300 seconds",
+            )
+
+        return DeployResult(
+            success=result.returncode == 0,
+            provider=self.name,
+            stdout=result.stdout,
+            stderr=result.stderr,
+            error=result.stderr if result.returncode != 0 else None,
+        )
+
     @staticmethod
     def _extract_url(stdout: str) -> str | None:
         match = re.search(r"https://\S+\.execute-api\.\S+\.amazonaws\.com\S*", stdout)
@@ -505,6 +743,54 @@ class GcpCloudRunProvider(DeployProvider):
             error=result.stderr if result.returncode != 0 else None,
         )
 
+    def destroy(
+        self,
+        workdir: str = ".",
+        env: dict[str, str] | None = None,
+    ) -> DeployResult:
+        import os
+        from pathlib import Path as _Path
+
+        run_env = {**os.environ, **(env or {})}
+
+        service_name = _Path(workdir).resolve().name
+        cmd = [
+            "gcloud", "run", "services", "delete", service_name,
+            "--region", run_env.get("GCP_REGION", "us-central1"),
+            "--project", run_env.get("GCP_PROJECT_ID", ""),
+            "--quiet",
+        ]
+
+        try:
+            result = subprocess.run(
+                cmd,
+                cwd=workdir,
+                capture_output=True,
+                text=True,
+                timeout=120,
+                env=run_env,
+            )
+        except FileNotFoundError:
+            return DeployResult(
+                success=False,
+                provider=self.name,
+                error="gcloud CLI not found",
+            )
+        except subprocess.TimeoutExpired:
+            return DeployResult(
+                success=False,
+                provider=self.name,
+                error="Destroy timed out after 120 seconds",
+            )
+
+        return DeployResult(
+            success=result.returncode == 0,
+            provider=self.name,
+            stdout=result.stdout,
+            stderr=result.stderr,
+            error=result.stderr if result.returncode != 0 else None,
+        )
+
     @staticmethod
     def _extract_url(output: str) -> str | None:
         match = re.search(r"https://\S+\.run\.app", output)
@@ -556,6 +842,45 @@ class RailwayProvider(DeployProvider):
             success=result.returncode == 0,
             provider=self.name,
             url=url,
+            stdout=result.stdout,
+            stderr=result.stderr,
+            error=result.stderr if result.returncode != 0 else None,
+        )
+
+    def destroy(
+        self,
+        workdir: str = ".",
+        env: dict[str, str] | None = None,
+    ) -> DeployResult:
+        import os
+
+        run_env = {**os.environ, **(env or {})}
+
+        try:
+            result = subprocess.run(
+                ["railway", "down", "--yes"],
+                cwd=workdir,
+                capture_output=True,
+                text=True,
+                timeout=120,
+                env=run_env,
+            )
+        except FileNotFoundError:
+            return DeployResult(
+                success=False,
+                provider=self.name,
+                error="railway CLI not found",
+            )
+        except subprocess.TimeoutExpired:
+            return DeployResult(
+                success=False,
+                provider=self.name,
+                error="Destroy timed out after 120 seconds",
+            )
+
+        return DeployResult(
+            success=result.returncode == 0,
+            provider=self.name,
             stdout=result.stdout,
             stderr=result.stderr,
             error=result.stderr if result.returncode != 0 else None,
@@ -618,6 +943,17 @@ class RenderProvider(DeployProvider):
             success=True,
             provider=self.name,
             stdout=response.text,
+        )
+
+    def destroy(
+        self,
+        workdir: str = ".",
+        env: dict[str, str] | None = None,
+    ) -> DeployResult:
+        return DeployResult(
+            success=False,
+            provider=self.name,
+            error="Render services must be deleted via dashboard",
         )
 
 

@@ -106,6 +106,32 @@ class TestCloudflareProvider:
         call_kwargs = mock_run.call_args
         assert "CLOUDFLARE_API_TOKEN" in call_kwargs.kwargs["env"]
 
+    def test_destroy_success(self):
+        provider = CloudflareProvider()
+        mock_result = subprocess.CompletedProcess(
+            args=["wrangler", "delete"], returncode=0,
+            stdout="Successfully deleted", stderr="",
+        )
+        with patch("subprocess.run", return_value=mock_result):
+            result = provider.destroy(workdir="/tmp/test")
+        assert result.success is True
+        assert result.provider == "cloudflare"
+        assert result.error is None
+
+    def test_destroy_cli_not_found(self):
+        provider = CloudflareProvider()
+        with patch("subprocess.run", side_effect=FileNotFoundError):
+            result = provider.destroy()
+        assert result.success is False
+        assert "not found" in result.error
+
+    def test_destroy_timeout(self):
+        provider = CloudflareProvider()
+        with patch("subprocess.run", side_effect=subprocess.TimeoutExpired("wrangler", 120)):
+            result = provider.destroy()
+        assert result.success is False
+        assert "timed out" in result.error
+
 
 class TestVercelProvider:
     def test_name(self):
@@ -170,6 +196,20 @@ class TestVercelProvider:
         url = VercelProvider._extract_url("Error occurred")
         assert url is None
 
+    def test_destroy_success(self):
+        mock_result = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="Removed", stderr="",
+        )
+        with patch("subprocess.run", return_value=mock_result):
+            result = VercelProvider().destroy()
+        assert result.success is True
+
+    def test_destroy_cli_not_found(self):
+        with patch("subprocess.run", side_effect=FileNotFoundError):
+            result = VercelProvider().destroy()
+        assert result.success is False
+        assert "not found" in result.error
+
 
 class TestFlyProvider:
     def test_name(self):
@@ -217,6 +257,30 @@ class TestFlyProvider:
         assert FlyProvider._extract_url("https://my-app.fly.dev") == "https://my-app.fly.dev"
         assert FlyProvider._extract_url("no url here") is None
 
+    def test_destroy_success(self, tmp_path):
+        (tmp_path / "fly.toml").write_text('app = "my-app"\n')
+        mock_result = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="Destroyed app my-app", stderr="",
+        )
+        with patch("subprocess.run", return_value=mock_result) as mock_run:
+            result = FlyProvider().destroy(workdir=str(tmp_path))
+        assert result.success is True
+        # Verify app name was passed to the command
+        cmd = mock_run.call_args[0][0]
+        assert "my-app" in cmd
+
+    def test_destroy_cli_not_found(self, tmp_path):
+        (tmp_path / "fly.toml").write_text('app = "my-app"\n')
+        with patch("subprocess.run", side_effect=FileNotFoundError):
+            result = FlyProvider().destroy(workdir=str(tmp_path))
+        assert result.success is False
+        assert "not found" in result.error
+
+    def test_destroy_no_fly_toml(self, tmp_path):
+        result = FlyProvider().destroy(workdir=str(tmp_path))
+        assert result.success is False
+        assert "app name" in result.error.lower()
+
 
 class TestNetlifyProvider:
     def test_name(self):
@@ -263,6 +327,20 @@ class TestNetlifyProvider:
     def test_extract_url(self):
         assert NetlifyProvider._extract_url("https://my-site.netlify.app") == "https://my-site.netlify.app"
         assert NetlifyProvider._extract_url("error") is None
+
+    def test_destroy_success(self):
+        mock_result = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="Site deleted", stderr="",
+        )
+        with patch("subprocess.run", return_value=mock_result):
+            result = NetlifyProvider().destroy()
+        assert result.success is True
+
+    def test_destroy_cli_not_found(self):
+        with patch("subprocess.run", side_effect=FileNotFoundError):
+            result = NetlifyProvider().destroy()
+        assert result.success is False
+        assert "not found" in result.error
 
 
 class TestDockerRegistryProvider:
@@ -328,6 +406,11 @@ class TestDockerRegistryProvider:
         assert result.success is False
         assert "timed out" in result.error
 
+    def test_destroy_noop(self):
+        result = DockerRegistryProvider().destroy()
+        assert result.success is True
+        assert "no-op" in result.stdout.lower()
+
 
 class TestAwsLambdaProvider:
     def test_name(self):
@@ -392,6 +475,20 @@ class TestAwsLambdaProvider:
         assert AwsLambdaProvider._extract_url(stdout) is not None
         assert AwsLambdaProvider._extract_url("no url") is None
 
+    def test_destroy_success(self):
+        mock_result = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="Deleted stack", stderr="",
+        )
+        with patch("subprocess.run", return_value=mock_result):
+            result = AwsLambdaProvider().destroy()
+        assert result.success is True
+
+    def test_destroy_cli_not_found(self):
+        with patch("subprocess.run", side_effect=FileNotFoundError):
+            result = AwsLambdaProvider().destroy()
+        assert result.success is False
+        assert "not found" in result.error
+
 
 class TestGcpCloudRunProvider:
     def test_name(self):
@@ -454,6 +551,22 @@ class TestGcpCloudRunProvider:
         assert GcpCloudRunProvider._extract_url("https://svc-abc.run.app") is not None
         assert GcpCloudRunProvider._extract_url("no url") is None
 
+    def test_destroy_success(self):
+        mock_result = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="Deleted service", stderr="",
+        )
+        with patch("subprocess.run", return_value=mock_result):
+            result = GcpCloudRunProvider().destroy(
+                env={"GCP_PROJECT_ID": "my-project"},
+            )
+        assert result.success is True
+
+    def test_destroy_cli_not_found(self):
+        with patch("subprocess.run", side_effect=FileNotFoundError):
+            result = GcpCloudRunProvider().destroy()
+        assert result.success is False
+        assert "not found" in result.error
+
 
 class TestRailwayProvider:
     def test_name(self):
@@ -500,6 +613,20 @@ class TestRailwayProvider:
     def test_extract_url(self):
         assert RailwayProvider._extract_url("https://my-app.up.railway.app") is not None
         assert RailwayProvider._extract_url("error") is None
+
+    def test_destroy_success(self):
+        mock_result = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="Service stopped", stderr="",
+        )
+        with patch("subprocess.run", return_value=mock_result):
+            result = RailwayProvider().destroy()
+        assert result.success is True
+
+    def test_destroy_cli_not_found(self):
+        with patch("subprocess.run", side_effect=FileNotFoundError):
+            result = RailwayProvider().destroy()
+        assert result.success is False
+        assert "not found" in result.error
 
 
 class TestRenderProvider:
@@ -550,6 +677,11 @@ class TestRenderProvider:
                 env={"RENDER_DEPLOY_HOOK_URL": "https://api.render.com/deploy/srv-xxx"},
             )
         assert result.success is False
+
+    def test_destroy_returns_error(self):
+        result = RenderProvider().destroy()
+        assert result.success is False
+        assert "dashboard" in result.error.lower()
 
 
 class TestDeployProviderFactory:
