@@ -181,7 +181,10 @@ class TestDeployStepGeneration:
     def test_cloudflare_deploy_step_still_works(self):
         config = WorkflowConfig(
             deploy_provider="cloudflare",
-            deploy_secrets={"apiToken": "CLOUDFLARE_API_TOKEN", "accountId": "CLOUDFLARE_ACCOUNT_ID"},
+            deploy_secrets={
+                "apiToken": "CLOUDFLARE_API_TOKEN",
+                "accountId": "CLOUDFLARE_ACCOUNT_ID",
+            },
         )
         output = generate_workflow(config)
         assert "Deploy to Cloudflare" in output

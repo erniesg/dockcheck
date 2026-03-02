@@ -8,17 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from dockcheck.tools.deploy import (
-    AwsLambdaProvider,
-    CloudflareProvider,
-    DockerRegistryProvider,
-    FlyProvider,
-    GcpCloudRunProvider,
-    NetlifyProvider,
-    RailwayProvider,
-    RenderProvider,
-    VercelProvider,
-)
+from dockcheck.tools.deploy import CloudflareProvider
 
 from .conftest import require_env
 
