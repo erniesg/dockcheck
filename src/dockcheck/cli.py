@@ -51,7 +51,11 @@ def cli() -> None:
 )
 @click.option(
     "--provider",
-    type=click.Choice(["cloudflare", "vercel", "fly", "netlify", "docker-registry", "aws-lambda", "gcp-cloudrun", "railway", "render"]),
+    type=click.Choice([
+        "cloudflare", "vercel", "fly", "netlify",
+        "docker-registry", "aws-lambda", "gcp-cloudrun",
+        "railway", "render",
+    ]),
     default=None,
     help="Deploy provider (skips detection).",
 )
@@ -386,8 +390,14 @@ def run(
 
 @cli.command()
 @click.option(
-    "--provider", type=click.Choice(["cloudflare", "vercel", "fly", "netlify", "docker-registry", "aws-lambda", "gcp-cloudrun", "railway", "render"]),
-    default=None, help="Deploy provider (auto-detected if not set).",
+    "--provider",
+    type=click.Choice([
+        "cloudflare", "vercel", "fly", "netlify",
+        "docker-registry", "aws-lambda", "gcp-cloudrun",
+        "railway", "render",
+    ]),
+    default=None,
+    help="Deploy provider (auto-detected if not set).",
 )
 @click.option(
     "--dir", "target_dir", type=click.Path(), default=".",
@@ -424,8 +434,14 @@ def deploy(provider: str | None, target_dir: str) -> None:
 
 @cli.command()
 @click.option(
-    "--provider", type=click.Choice(["cloudflare", "vercel", "fly", "netlify", "docker-registry", "aws-lambda", "gcp-cloudrun", "railway", "render"]),
-    default=None, help="Deploy provider (auto-detected if not set).",
+    "--provider",
+    type=click.Choice([
+        "cloudflare", "vercel", "fly", "netlify",
+        "docker-registry", "aws-lambda", "gcp-cloudrun",
+        "railway", "render",
+    ]),
+    default=None,
+    help="Deploy provider (auto-detected if not set).",
 )
 @click.option(
     "--dir", "target_dir", type=click.Path(), default=".",

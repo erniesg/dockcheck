@@ -278,7 +278,9 @@ def _build_deploy_step(cfg: WorkflowConfig) -> str | None:
             "        uses: docker/build-push-action@v5\n"
             "        with:\n"
             "          push: true\n"
-            "          tags: ${{ secrets.DOCKER_USERNAME }}/${{ github.event.repository.name }}:latest"
+            "          tags: "
+            "${{ secrets.DOCKER_USERNAME }}/"
+            "${{ github.event.repository.name }}:latest"
         )
 
     if cfg.deploy_provider == "aws-lambda":

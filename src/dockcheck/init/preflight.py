@@ -147,7 +147,6 @@ class PreflightChecker:
             s.name for s in auth_status.secrets
             if not s.available_local and not s.required
         ]
-        missing = missing_required + missing_optional
 
         auth_message_parts: list[str] = []
         if auth_status.all_ready and not missing_optional:

@@ -230,7 +230,10 @@ def _gcp_cloudrun_provider() -> ProviderSpec:
             ),
         ],
         cli_tool="gcloud",
-        deploy_command="gcloud run deploy SERVICE --source . --region REGION --project PROJECT_ID --quiet",
+        deploy_command=(
+            "gcloud run deploy SERVICE --source ."
+            " --region REGION --project PROJECT_ID --quiet"
+        ),
         install_hint="Install gcloud: https://cloud.google.com/sdk/docs/install",
         detect_files=["cloudbuild.yaml"],
         supported_languages=["python", "javascript", "typescript", "go", "rust"],
